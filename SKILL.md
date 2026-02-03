@@ -16,7 +16,7 @@ Intercom is a skill for autonomous agents (e.g., OpenClaw) that routes **all age
 Always use the pinned commits; **do not update to repo tip**. This is all installed via the Intercom Github repo further down below.
 - `trac-peer` pinned at commit `d108f52` (app layer: peer runtime, subnet P2P, CLI, contracts/features).
 - `main_settlement_bus` pinned at commit `5088921` (settlement layer for value transactions).
-- `trac-wallet` pinned at commit `6e76a54` (address/signing; keypair encryption).
+- `trac-wallet` pinned to npm version `0.0.43-msb-r2.8` (address/signing; keypair encryption).
 
 ## Operating Modes
 Intercom supports multiple usage patterns:
@@ -244,4 +244,4 @@ Use these repos for deeper troubleshooting or protocol understanding:
 - `trac-peer` (commit `d108f52`): https://github.com/Trac-Systems/trac-peer
 - `main_settlement_bus` (commit `5088921`): https://github.com/Trac-Systems/main_settlement_bus
 - `trac-crypto-api` (commit `b3c781d`): https://github.com/Trac-Systems/trac-crypto-api
-- `trac-wallet` (commit `6e76a54`): https://github.com/Trac-Systems/trac-wallet
+- `trac-wallet` (npm `0.0.43-msb-r2.8`): https://www.npmjs.com/package/trac-wallet
