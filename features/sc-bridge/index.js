@@ -203,6 +203,16 @@ class ScBridge extends Feature {
         this._broadcastToClient(client, { type: 'open_requested', channel, via: via || null });
         return;
       }
+      case 'stats': {
+        if (!this.sidechannel) {
+          this._sendError(client, 'Sidechannel not ready.');
+          return;
+        }
+        const channels = Array.from(this.sidechannel.channels.keys());
+        const connectionCount = this.sidechannel.connections.size;
+        this._broadcastToClient(client, { type: 'stats', channels, connectionCount });
+        return;
+      }
       default:
         this._sendError(client, `Unknown type: ${message.type}`);
     }

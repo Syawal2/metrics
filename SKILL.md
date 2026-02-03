@@ -247,6 +247,7 @@ If a token is set, authenticate first:
 - `send` : `{ type:"send", channel:"...", message:any }`
 - `join` : `{ type:"join", channel:"..." }`
 - `open` : `{ type:"open", channel:"...", via?: "..." }`
+- `stats` : `{ type:"stats" }` → returns `{ type:"stats", channels, connectionCount }`
 - `set_filter` / `clear_filter`
 - `subscribe` / `unsubscribe` (optional per‑client channel filter)
 - `ping`
