@@ -925,6 +925,9 @@ Intercom + bots (symmetrical, both sides can quote/RFQ/invite):
 scripts/run-swap-maker.sh swap-maker 49222 0000intercomswapbtcusdt
 scripts/run-swap-taker.sh swap-taker 49223 0000intercomswapbtcusdt
 
+# PoW must be ON in real deployments (default). For fast local tests only:
+# SIDECHANNEL_POW=0 SIDECHANNEL_POW_DIFFICULTY=0 scripts/run-swap-maker.sh ...
+
 # Start OTC bots (pass the live RPC + keypairs + mint; both default to otc-channel 0000intercomswapbtcusdt)
 scripts/otc-maker-peer.sh swap-maker 49222 \
   --run-swap 1 \

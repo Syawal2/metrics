@@ -21,6 +21,9 @@ STORE_NAME="${1:-swap-maker}"
 SC_PORT="${2:-49222}"
 OTC_CHANNEL="${3:-0000intercomswapbtcusdt}"
 
+SIDECHANNEL_POW="${SIDECHANNEL_POW:-1}"
+SIDECHANNEL_POW_DIFFICULTY="${SIDECHANNEL_POW_DIFFICULTY:-12}"
+
 TOKEN_DIR="onchain/sc-bridge"
 TOKEN_FILE="${TOKEN_DIR}/${STORE_NAME}.token"
 mkdir -p "$TOKEN_DIR"
@@ -42,7 +45,8 @@ exec pear run . \
   --sc-bridge-token "$SC_TOKEN" \
   --sc-bridge-port "$SC_PORT" \
   --sidechannels "$OTC_CHANNEL" \
-  --sidechannel-pow 0 \
+  --sidechannel-pow "$SIDECHANNEL_POW" \
+  --sidechannel-pow-difficulty "$SIDECHANNEL_POW_DIFFICULTY" \
   --sidechannel-welcome-required 0 \
   --sidechannel-invite-required 1 \
   --sidechannel-invite-prefixes "swap:"

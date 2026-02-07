@@ -12,6 +12,9 @@ $storeName = if ($args.Length -ge 1 -and $args[0]) { [string]$args[0] } else { "
 $scPort = if ($args.Length -ge 2 -and $args[1]) { [string]$args[1] } else { "49222" }
 $otcChannel = if ($args.Length -ge 3 -and $args[2]) { [string]$args[2] } else { "0000intercomswapbtcusdt" }
 
+$sidechannelPow = if ($env:SIDECHANNEL_POW) { [string]$env:SIDECHANNEL_POW } else { "1" }
+$sidechannelPowDifficulty = if ($env:SIDECHANNEL_POW_DIFFICULTY) { [string]$env:SIDECHANNEL_POW_DIFFICULTY } else { "12" }
+
 $tokenDir = Join-Path $root "onchain/sc-bridge"
 $tokenFile = Join-Path $tokenDir ("{0}.token" -f $storeName)
 New-Item -ItemType Directory -Force -Path $tokenDir | Out-Null
@@ -31,7 +34,8 @@ pear run . `
   --sc-bridge-token $scToken `
   --sc-bridge-port $scPort `
   --sidechannels $otcChannel `
-  --sidechannel-pow 0 `
+  --sidechannel-pow $sidechannelPow `
+  --sidechannel-pow-difficulty $sidechannelPowDifficulty `
   --sidechannel-welcome-required 0 `
   --sidechannel-invite-required 1 `
   --sidechannel-invite-prefixes "swap:"

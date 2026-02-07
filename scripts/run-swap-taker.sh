@@ -21,6 +21,9 @@ STORE_NAME="${1:-swap-taker}"
 SC_PORT="${2:-49223}"
 OTC_CHANNEL="${3:-0000intercomswapbtcusdt}"
 
+SIDECHANNEL_POW="${SIDECHANNEL_POW:-1}"
+SIDECHANNEL_POW_DIFFICULTY="${SIDECHANNEL_POW_DIFFICULTY:-12}"
+
 INVITER_KEYS="${SWAP_INVITER_KEYS:-}"
 if [[ -z "$INVITER_KEYS" ]]; then
   echo "ERROR: SWAP_INVITER_KEYS is required (comma-separated inviter peer pubkeys, hex)." >&2
@@ -49,7 +52,8 @@ exec pear run . \
   --sc-bridge-token "$SC_TOKEN" \
   --sc-bridge-port "$SC_PORT" \
   --sidechannels "$OTC_CHANNEL" \
-  --sidechannel-pow 0 \
+  --sidechannel-pow "$SIDECHANNEL_POW" \
+  --sidechannel-pow-difficulty "$SIDECHANNEL_POW_DIFFICULTY" \
   --sidechannel-welcome-required 0 \
   --sidechannel-invite-required 1 \
   --sidechannel-invite-prefixes "swap:" \
