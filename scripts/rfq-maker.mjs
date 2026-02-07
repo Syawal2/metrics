@@ -763,11 +763,19 @@ async function main() {
         const tradeId = String(msg.trade_id);
         if (String(known.trade_id) !== tradeId) return;
         const swapChannel = swapChannelTemplate.replaceAll('{trade_id}', tradeId);
-        if (swaps.has(swapChannel)) return;
         const inviteePubKey = String(msg.signer || '').trim().toLowerCase();
         if (!inviteePubKey) return;
         // Prevent quote hijacking: only the original RFQ signer is allowed to accept its quote.
         if (known.rfq_signer && inviteePubKey !== String(known.rfq_signer).trim().toLowerCase()) return;
+
+        // If a swap is already in-flight for this trade, treat quote_accept as a retry signal and re-send
+        // a fresh swap invite (do not reset the swap state machine).
+        const existing = swaps.get(swapChannel);
+        if (existing) {
+          if (String(existing.inviteePubKey || '').trim().toLowerCase() !== inviteePubKey) return;
+          // Note: we intentionally create a new invite (fresh nonce) so the taker can join even if they
+          // missed the first invite.
+        }
 
         // Build welcome + invite signed by this peer (SC-Bridge signing).
         const welcomePayload = normalizeWelcomePayload({
@@ -809,6 +817,9 @@ async function main() {
         });
         const swapInviteSigned = await signSwapEnvelope(sc, swapInviteUnsigned);
         ensureOk(await sc.send(rfqChannel, swapInviteSigned), 'send swap_invite');
+        // If this was a retry for an existing swap, just re-send the invite and return.
+        if (existing) return;
+
         ensureOk(await sc.join(swapChannel, { welcome }), `join ${swapChannel}`);
         ensureOk(await sc.subscribe([swapChannel]), `subscribe ${swapChannel}`);
 
