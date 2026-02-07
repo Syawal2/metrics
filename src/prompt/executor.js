@@ -45,6 +45,7 @@ import {
   withdrawFeesTx,
   withdrawTradeFeesTx,
 } from '../solana/lnUsdtEscrowClient.js';
+import { isSecretHandle } from './secrets.js';
 
 function isObject(v) {
   return v && typeof v === 'object' && !Array.isArray(v);
@@ -156,6 +157,19 @@ function decodeB64JsonMaybe(value) {
   }
 }
 
+function resolveSecretArg(secrets, value, { label, expectType = null } = {}) {
+  if (typeof value !== 'string') return value;
+  const s = value.trim();
+  if (!isSecretHandle(s)) return value;
+  if (!secrets || typeof secrets.get !== 'function') {
+    throw new Error(`${label} is a secret handle but no secrets store was provided`);
+  }
+  const resolved = secrets.get(s);
+  if (resolved === null || resolved === undefined) throw new Error(`Unknown ${label} secret handle`);
+  if (expectType && typeof resolved !== expectType) throw new Error(`${label} secret handle has invalid type`);
+  return resolved;
+}
+
 async function withScBridge({ url, token }, fn) {
   const sc = new ScBridgeClient({ url, token });
   try {
@@ -263,12 +277,12 @@ export class ToolExecutor {
   _requireSolanaSigner() {
     if (this._solanaKeypair) return this._solanaKeypair;
     const p = String(this.solana?.keypairPath || '').trim();
-    if (!p) throw new Error('Solana signer not configured (missing INTERCOMSWAP_SOLANA_KEYPAIR)');
+    if (!p) throw new Error('Solana signer not configured (set solana.keypair in prompt setup JSON)');
     this._solanaKeypair = readSolanaKeypair(p);
     return this._solanaKeypair;
   }
 
-  async execute(toolName, args, { autoApprove = false, dryRun = false } = {}) {
+  async execute(toolName, args, { autoApprove = false, dryRun = false, secrets = null } = {}) {
     assertPlainObject(args ?? {}, toolName);
 
     // Read-only SC-Bridge
@@ -290,8 +304,10 @@ export class ToolExecutor {
       assertAllowedKeys(args, toolName, ['channel', 'invite_b64', 'welcome_b64']);
       requireApproval(toolName, autoApprove);
       const channel = normalizeChannelName(expectString(args, toolName, 'channel', { max: 128 }));
-      const invite = expectOptionalString(args, toolName, 'invite_b64', { max: 16384 });
-      const welcome = expectOptionalString(args, toolName, 'welcome_b64', { max: 16384 });
+      const inviteRaw = expectOptionalString(args, toolName, 'invite_b64', { max: 16384 });
+      const welcomeRaw = expectOptionalString(args, toolName, 'welcome_b64', { max: 16384 });
+      const invite = inviteRaw !== null ? resolveSecretArg(secrets, inviteRaw, { label: 'invite_b64' }) : null;
+      const welcome = welcomeRaw !== null ? resolveSecretArg(secrets, welcomeRaw, { label: 'welcome_b64' }) : null;
       if (dryRun) return { type: 'dry_run', tool: toolName, channel };
       return withScBridge(this.scBridge, (sc) => sc.join(channel, { invite, welcome }));
     }
@@ -307,8 +323,10 @@ export class ToolExecutor {
       requireApproval(toolName, autoApprove);
       const channel = normalizeChannelName(expectString(args, toolName, 'channel', { max: 128 }));
       const via = normalizeChannelName(expectString(args, toolName, 'via', { max: 128 }));
-      const invite = expectOptionalString(args, toolName, 'invite_b64', { max: 16384 });
-      const welcome = expectOptionalString(args, toolName, 'welcome_b64', { max: 16384 });
+      const inviteRaw = expectOptionalString(args, toolName, 'invite_b64', { max: 16384 });
+      const welcomeRaw = expectOptionalString(args, toolName, 'welcome_b64', { max: 16384 });
+      const invite = inviteRaw !== null ? resolveSecretArg(secrets, inviteRaw, { label: 'invite_b64' }) : null;
+      const welcome = welcomeRaw !== null ? resolveSecretArg(secrets, welcomeRaw, { label: 'welcome_b64' }) : null;
       if (dryRun) return { type: 'dry_run', tool: toolName, channel, via };
       return withScBridge(this.scBridge, (sc) => sc.open(channel, { via, invite, welcome }));
     }
@@ -964,7 +982,9 @@ export class ToolExecutor {
     if (toolName === 'intercomswap_sol_escrow_claim') {
       assertAllowedKeys(args, toolName, ['preimage_hex', 'mint']);
       requireApproval(toolName, autoApprove);
-      const preimageHex = normalizeHex32(expectString(args, toolName, 'preimage_hex', { min: 64, max: 64 }), 'preimage_hex');
+      const preimageArg = expectString(args, toolName, 'preimage_hex', { min: 1, max: 200 });
+      const preimageResolved = resolveSecretArg(secrets, preimageArg, { label: 'preimage_hex', expectType: 'string' });
+      const preimageHex = normalizeHex32(preimageResolved, 'preimage_hex');
       const paymentHashHex = computePaymentHashFromPreimage(preimageHex);
       const mint = new PublicKey(normalizeBase58(expectString(args, toolName, 'mint', { max: 64 }), 'mint'));
       if (dryRun) return { type: 'dry_run', tool: toolName, payment_hash_hex: paymentHashHex };
@@ -1043,7 +1063,7 @@ export class ToolExecutor {
     if (toolName === 'intercomswap_receipts_list' || toolName === 'intercomswap_receipts_show') {
       const { TradeReceiptsStore } = await import('../receipts/store.js');
       const dbPath = String(this.receipts?.dbPath || '').trim();
-      if (!dbPath) throw new Error('receipts db not configured (missing INTERCOMSWAP_RECEIPTS_DB)');
+      if (!dbPath) throw new Error('receipts db not configured (set receipts.db in prompt setup JSON)');
       const store = TradeReceiptsStore.open({ dbPath });
 
       if (toolName === 'intercomswap_receipts_list') {
@@ -1059,4 +1079,3 @@ export class ToolExecutor {
     throw new Error(`Unknown tool: ${toolName}`);
   }
 }
-

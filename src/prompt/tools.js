@@ -333,7 +333,13 @@ export const INTERCOMSWAP_TOOLS = [
     type: 'object',
     additionalProperties: false,
     properties: {
-      preimage_hex: { type: 'string', minLength: 64, maxLength: 64, pattern: '^[0-9a-fA-F]{64}$' },
+      preimage_hex: {
+        anyOf: [
+          { type: 'string', minLength: 64, maxLength: 64, pattern: '^[0-9a-fA-F]{64}$' },
+          { type: 'string', minLength: 8, maxLength: 200, pattern: '^secret:[0-9a-fA-F-]+$' },
+        ],
+        description: '32-byte hex preimage, or a secret handle returned by promptd (secret:<id>).',
+      },
       mint: base58Param,
     },
     required: ['preimage_hex', 'mint'],

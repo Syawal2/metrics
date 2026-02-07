@@ -38,7 +38,7 @@ This fork keeps Intercom intact and layers swap + ops tooling on top.
 - [Solana Escrow Program Tooling (`escrowctl`)](#solana-escrow-program-tooling-escrowctl)
 - [Lightning Operator Tooling (`lnctl`)](#lightning-operator-tooling-lnctl)
 - [Optional LND Local Lifecycle (`lndctl` / `lndpw`)](#optional-lnd-local-lifecycle-lndctl--lndpw)
-- [Prompt Router (Planned)](#prompt-router-planned)
+- [Prompt Router (Optional)](#prompt-router-optional)
 - [Tests (Mandatory)](#tests-mandatory)
 - [Secrets + Repo Hygiene](#secrets--repo-hygiene)
 
@@ -566,11 +566,39 @@ This is only for running LND from a local directory under `onchain/` (not requir
 
 ---
 
-## Prompt Router (Planned)
+## Prompt Router (Optional)
 
-Not implemented yet: a small "prompt router" layer that converts high-level prompts into the script invocations above (with full parameterization and guardrails). The intention is:
-- Use a top-tier model to install/upgrade and generate safe scripts/configs.
-- After install, run day-to-day operations via tool calls (scripts) so a smaller model (or humans/programs) can operate the system reliably.
+This repo includes an optional local prompting layer that:
+- calls an OpenAI-compatible LLM endpoint
+- executes *only* the safe tool surface (SC-Bridge safe RPC + deterministic scripts)
+- writes an audit trail under `onchain/`
+- keeps swap secrets out of the model context (preimages, invites/welcomes) by using opaque `secret:<id>` handles
+
+### Setup (JSON, Gitignored)
+
+All prompt configuration lives in a local JSON file (recommended path: `onchain/prompt/setup.json`), which is gitignored by default.
+
+Generate a template:
+```bash
+./scripts/promptd.sh --print-template > onchain/prompt/setup.json
+```
+
+Edit `onchain/prompt/setup.json`:
+- `llm.base_url`, `llm.model` (and optional sampling params)
+- `sc_bridge.token` or `sc_bridge.token_file`
+- `receipts.db` (optional, for `intercomswap_receipts_*` tools)
+- `ln.*`, `solana.*` (optional, depending on which tools you want enabled)
+
+Start the service:
+```bash
+./scripts/promptd.sh --config onchain/prompt/setup.json
+```
+
+Run prompts:
+```bash
+./scripts/promptctl.sh --prompt "Show SC-Bridge info"
+./scripts/promptctl.sh --auto-approve 1 --prompt "Post an RFQ in 0000intercomswapbtcusdt"
+```
 
 ---
 

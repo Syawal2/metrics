@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import process from 'node:process';
@@ -7,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import { PromptRouter } from '../src/prompt/router.js';
 import { ToolExecutor } from '../src/prompt/executor.js';
-import { loadLlmConfigFromEnv } from '../src/prompt/config.js';
+import { DEFAULT_PROMPT_SETUP_PATH, loadPromptSetupFromFile } from '../src/prompt/config.js';
 import { INTERCOMSWAP_TOOLS } from '../src/prompt/tools.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -28,51 +27,13 @@ Starts a local HTTP server that:
 - executes tool calls via deterministic tooling / SC-Bridge safe RPCs
 - writes an audit trail (jsonl) under onchain/
 
-Env (LLM):
-  INTERCOMSWAP_LLM_BASE_URL
-  INTERCOMSWAP_LLM_API_KEY
-  INTERCOMSWAP_LLM_MODEL
-  INTERCOMSWAP_LLM_MAX_TOKENS
-  INTERCOMSWAP_LLM_TEMPERATURE
-  INTERCOMSWAP_LLM_TOP_P
-  INTERCOMSWAP_LLM_TOP_K
-  INTERCOMSWAP_LLM_MIN_P
-  INTERCOMSWAP_LLM_REPETITION_PENALTY
-  INTERCOMSWAP_LLM_TOOL_FORMAT=tools|functions
+Setup JSON (gitignored):
+  --config <path>   (default: ${DEFAULT_PROMPT_SETUP_PATH})
 
-Env (Prompt Router):
-  INTERCOMSWAP_PROMPT_HOST=127.0.0.1
-  INTERCOMSWAP_PROMPT_PORT=9333
-  INTERCOMSWAP_PROMPT_AUDIT_DIR=onchain/prompt/audit
-  INTERCOMSWAP_PROMPT_AUTO_APPROVE=0|1     (server default; request can override)
+  promptd reads all model + tool wiring from a local JSON file (recommended under onchain/ so it never gets committed).
 
-Env (SC-Bridge):
-  INTERCOMSWAP_SC_BRIDGE_URL=ws://127.0.0.1:49222
-  INTERCOMSWAP_SC_BRIDGE_TOKEN=<token>
-  INTERCOMSWAP_SC_BRIDGE_TOKEN_FILE=onchain/sc-bridge/<store>.token
-
-Env (Receipts):
-  INTERCOMSWAP_RECEIPTS_DB=onchain/receipts/<store>.sqlite
-
-Env (Lightning ops):
-  INTERCOMSWAP_LN_IMPL=cln|lnd
-  INTERCOMSWAP_LN_BACKEND=cli|docker
-  INTERCOMSWAP_LN_NETWORK=regtest|signet|testnet|mainnet
-  INTERCOMSWAP_LN_COMPOSE_FILE=dev/ln-regtest/docker-compose.yml
-  INTERCOMSWAP_LN_SERVICE=<docker service name>
-  INTERCOMSWAP_LN_CLI_BIN=<path>
-  INTERCOMSWAP_LND_RPCSERVER=<host:port>
-  INTERCOMSWAP_LND_TLSCERT=<path>
-  INTERCOMSWAP_LND_MACAROON=<path>
-  INTERCOMSWAP_LND_DIR=<path>
-
-Env (Solana ops):
-  INTERCOMSWAP_SOLANA_RPC_URL=http://127.0.0.1:8899[,url2,...]
-  INTERCOMSWAP_SOLANA_COMMITMENT=processed|confirmed|finalized
-  INTERCOMSWAP_SOLANA_PROGRAM_ID=<base58>  (optional; default is built-in)
-  INTERCOMSWAP_SOLANA_KEYPAIR=<path>       (required for signing tools)
-  INTERCOMSWAP_SOLANA_CU_LIMIT=<units>     (optional)
-  INTERCOMSWAP_SOLANA_CU_PRICE=<microLamports> (optional)
+  Print a template:
+    promptd --print-template
 
 HTTP API:
   GET  /healthz
@@ -82,19 +43,20 @@ HTTP API:
 `.trim();
 }
 
-function parseBoolEnv(value, fallback = false) {
-  const s = String(value ?? '').trim().toLowerCase();
-  if (!s) return fallback;
-  return ['1', 'true', 'yes', 'on'].includes(s);
-}
-
-function readTokenFromFile(filePath) {
-  if (!filePath) return '';
-  try {
-    return String(fs.readFileSync(filePath, 'utf8') || '').trim();
-  } catch (_e) {
-    return '';
+function parseArgs(argv) {
+  const flags = new Map();
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (!a.startsWith('--')) continue;
+    const k = a.slice(2);
+    const next = argv[i + 1];
+    if (!next || next.startsWith('--')) flags.set(k, true);
+    else {
+      flags.set(k, next);
+      i += 1;
+    }
   }
+  return flags;
 }
 
 function json(res, status, body) {
@@ -120,66 +82,84 @@ async function readJsonBody(req) {
 
 async function main() {
   const argv = process.argv.slice(2);
-  if (argv.includes('--help') || argv.includes('help')) {
+  const flags = parseArgs(argv);
+  if (argv.includes('--help') || argv.includes('help') || flags.get('help')) {
     process.stdout.write(`${usage()}\n`);
     return;
   }
 
-  const llmConfig = loadLlmConfigFromEnv();
-  if (!llmConfig.baseUrl) die('Missing INTERCOMSWAP_LLM_BASE_URL');
-  if (!llmConfig.model) die('Missing INTERCOMSWAP_LLM_MODEL');
+  if (flags.get('print-template')) {
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          llm: {
+            base_url: 'http://127.0.0.1:8000/v1',
+            api_key: '',
+            model: 'your-model-id',
+            max_tokens: 8000,
+            temperature: 0.4,
+            top_p: 0.95,
+            top_k: 40,
+            min_p: 0.05,
+            repetition_penalty: 1.1,
+            tool_format: 'tools',
+            timeout_ms: 120000,
+          },
+          server: {
+            host: '127.0.0.1',
+            port: 9333,
+            audit_dir: 'onchain/prompt/audit',
+            auto_approve_default: false,
+            max_steps: 12,
+          },
+          sc_bridge: {
+            url: 'ws://127.0.0.1:49222',
+            token: '',
+            token_file: 'onchain/sc-bridge/<store>.token',
+          },
+          receipts: {
+            db: 'onchain/receipts/<store>.sqlite',
+          },
+          ln: {
+            impl: 'cln',
+            backend: 'cli',
+            network: 'regtest',
+            compose_file: 'dev/ln-regtest/docker-compose.yml',
+            service: '',
+            cli_bin: '',
+            lnd: { rpcserver: '', tlscert: '', macaroon: '', dir: '' },
+          },
+          solana: {
+            rpc_url: 'http://127.0.0.1:8899',
+            commitment: 'confirmed',
+            program_id: '',
+            keypair: '',
+            cu_limit: null,
+            cu_price: null,
+          },
+        },
+        null,
+        2
+      )}\n`
+    );
+    return;
+  }
 
-  const host = String(process.env.INTERCOMSWAP_PROMPT_HOST || '127.0.0.1').trim();
-  const port = Number.parseInt(String(process.env.INTERCOMSWAP_PROMPT_PORT || '9333'), 10);
-  if (!Number.isFinite(port) || port <= 0) die('Invalid INTERCOMSWAP_PROMPT_PORT');
-
-  const auditDir = String(process.env.INTERCOMSWAP_PROMPT_AUDIT_DIR || 'onchain/prompt/audit').trim();
-  const defaultAutoApprove = parseBoolEnv(process.env.INTERCOMSWAP_PROMPT_AUTO_APPROVE, false);
-
-  const scUrl = String(process.env.INTERCOMSWAP_SC_BRIDGE_URL || 'ws://127.0.0.1:49222').trim();
-  const scToken =
-    String(process.env.INTERCOMSWAP_SC_BRIDGE_TOKEN || '').trim() ||
-    readTokenFromFile(String(process.env.INTERCOMSWAP_SC_BRIDGE_TOKEN_FILE || '').trim());
-  if (!scToken) die('Missing SC-Bridge token (set INTERCOMSWAP_SC_BRIDGE_TOKEN or INTERCOMSWAP_SC_BRIDGE_TOKEN_FILE)');
-
-  const receiptsDb = String(process.env.INTERCOMSWAP_RECEIPTS_DB || '').trim();
-
-  const ln = {
-    impl: String(process.env.INTERCOMSWAP_LN_IMPL || 'cln').trim(),
-    backend: String(process.env.INTERCOMSWAP_LN_BACKEND || 'cli').trim(),
-    network: String(process.env.INTERCOMSWAP_LN_NETWORK || 'regtest').trim(),
-    composeFile: String(process.env.INTERCOMSWAP_LN_COMPOSE_FILE || path.join(repoRoot, 'dev/ln-regtest/docker-compose.yml')).trim(),
-    service: String(process.env.INTERCOMSWAP_LN_SERVICE || '').trim(),
-    cliBin: String(process.env.INTERCOMSWAP_LN_CLI_BIN || '').trim(),
-    cwd: repoRoot,
-    lnd: {
-      rpcserver: String(process.env.INTERCOMSWAP_LND_RPCSERVER || '').trim(),
-      tlscertpath: String(process.env.INTERCOMSWAP_LND_TLSCERT || '').trim(),
-      macaroonpath: String(process.env.INTERCOMSWAP_LND_MACAROON || '').trim(),
-      lnddir: String(process.env.INTERCOMSWAP_LND_DIR || '').trim(),
-    },
-  };
-
-  const solana = {
-    rpcUrls: String(process.env.INTERCOMSWAP_SOLANA_RPC_URL || 'http://127.0.0.1:8899').trim(),
-    commitment: String(process.env.INTERCOMSWAP_SOLANA_COMMITMENT || 'confirmed').trim(),
-    programId: String(process.env.INTERCOMSWAP_SOLANA_PROGRAM_ID || '').trim(),
-    keypairPath: String(process.env.INTERCOMSWAP_SOLANA_KEYPAIR || '').trim(),
-    computeUnitLimit: process.env.INTERCOMSWAP_SOLANA_CU_LIMIT ? Number.parseInt(String(process.env.INTERCOMSWAP_SOLANA_CU_LIMIT), 10) : null,
-    computeUnitPriceMicroLamports: process.env.INTERCOMSWAP_SOLANA_CU_PRICE ? Number.parseInt(String(process.env.INTERCOMSWAP_SOLANA_CU_PRICE), 10) : null,
-  };
+  const configPath = flags.get('config') ? String(flags.get('config')).trim() : DEFAULT_PROMPT_SETUP_PATH;
+  const setup = loadPromptSetupFromFile({ configPath, cwd: repoRoot });
 
   const executor = new ToolExecutor({
-    scBridge: { url: scUrl, token: scToken },
-    ln,
-    solana,
-    receipts: { dbPath: receiptsDb },
+    scBridge: setup.scBridge,
+    ln: setup.ln,
+    solana: setup.solana,
+    receipts: setup.receipts,
   });
 
   const router = new PromptRouter({
-    llmConfig,
+    llmConfig: setup.llm,
     toolExecutor: executor,
-    auditDir,
+    auditDir: setup.server.auditDir,
+    maxSteps: setup.server.maxSteps,
   });
 
   const server = http.createServer(async (req, res) => {
@@ -203,7 +183,7 @@ async function main() {
         const sessionId = body.session_id ? String(body.session_id).trim() : null;
         const autoApprove =
           body.auto_approve === undefined || body.auto_approve === null
-            ? defaultAutoApprove
+            ? setup.server.autoApproveDefault
             : Boolean(body.auto_approve);
         const dryRun = Boolean(body.dry_run);
         const maxSteps = body.max_steps !== undefined && body.max_steps !== null ? Number(body.max_steps) : null;
@@ -219,15 +199,16 @@ async function main() {
     }
   });
 
-  server.listen(port, host, () => {
+  server.listen(setup.server.port, setup.server.host, () => {
     process.stdout.write(
       JSON.stringify(
         {
           type: 'promptd_listening',
-          host,
-          port,
-          audit_dir: auditDir,
-          llm: { base_url: llmConfig.baseUrl, model: llmConfig.model, tool_format: llmConfig.toolFormat },
+          config: setup.configPath,
+          host: setup.server.host,
+          port: setup.server.port,
+          audit_dir: setup.server.auditDir,
+          llm: { base_url: setup.llm.baseUrl, model: setup.llm.model, tool_format: setup.llm.toolFormat },
         },
         null,
         2
@@ -237,4 +218,3 @@ async function main() {
 }
 
 main().catch((err) => die(err?.message ?? String(err)));
-

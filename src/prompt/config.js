@@ -1,49 +1,160 @@
-import process from 'node:process';
+import fs from 'node:fs';
+import path from 'node:path';
 
-function parseIntEnv(value, fallback) {
-  if (value === undefined || value === null) return fallback;
-  const n = Number.parseInt(String(value).trim(), 10);
-  return Number.isFinite(n) ? n : fallback;
+function isObject(v) {
+  return v && typeof v === 'object' && !Array.isArray(v);
 }
 
-function parseFloatEnv(value, fallback) {
-  if (value === undefined || value === null) return fallback;
-  const n = Number.parseFloat(String(value).trim());
-  return Number.isFinite(n) ? n : fallback;
+function readJsonFile(filePath) {
+  const raw = fs.readFileSync(filePath, 'utf8');
+  try {
+    return JSON.parse(String(raw || '').trim() || '{}');
+  } catch (_e) {
+    throw new Error(`Invalid JSON: ${filePath}`);
+  }
 }
 
-function normalizeEmpty(value) {
+function normalizeString(value, { allowEmpty = false } = {}) {
   const s = String(value ?? '').trim();
-  return s.length ? s : '';
+  if (!s && !allowEmpty) return '';
+  return s;
 }
 
 function normalizeApiKey(value) {
-  const s = normalizeEmpty(value);
+  const s = normalizeString(value, { allowEmpty: true });
   if (!s) return '';
   const lowered = s.toLowerCase();
   if (['not-required', 'none', 'null', 'undefined'].includes(lowered)) return '';
   return s;
 }
 
-export function loadLlmConfigFromEnv(env = process.env) {
+function parseIntLike(value, fallback = null) {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
+  const n = Number.parseInt(String(value).trim(), 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function parseFloatLike(value, fallback = null) {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const n = Number.parseFloat(String(value).trim());
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function resolvePath(baseDir, maybePath) {
+  const p = normalizeString(maybePath, { allowEmpty: true });
+  if (!p) return '';
+  return path.isAbsolute(p) ? p : path.resolve(baseDir, p);
+}
+
+function readTokenMaybe({ token, tokenFile }, baseDir) {
+  const inline = normalizeString(token, { allowEmpty: true });
+  if (inline) return inline;
+  const filePath = resolvePath(baseDir, tokenFile);
+  if (!filePath) return '';
+  try {
+    return normalizeString(fs.readFileSync(filePath, 'utf8'), { allowEmpty: true });
+  } catch (_e) {
+    return '';
+  }
+}
+
+export const DEFAULT_PROMPT_SETUP_PATH = 'onchain/prompt/setup.json';
+
+// Loads the local promptd setup. The setup file MUST be gitignored (recommended under onchain/).
+//
+// Expected JSON structure (high-level):
+// {
+//   "llm": { "base_url": "...", "api_key": "...", "model": "...", ... },
+//   "server": { "host": "127.0.0.1", "port": 9333, "audit_dir": "onchain/prompt/audit", "auto_approve_default": false },
+//   "sc_bridge": { "url": "ws://127.0.0.1:49222", "token": "...", "token_file": "onchain/sc-bridge/peer.token" },
+//   "receipts": { "db": "onchain/receipts/maker.sqlite" },
+//   "ln": { ... },
+//   "solana": { ... }
+// }
+export function loadPromptSetupFromFile({ configPath = DEFAULT_PROMPT_SETUP_PATH, cwd = process.cwd() } = {}) {
+  const baseDir = path.resolve(cwd);
+  const resolved = resolvePath(baseDir, configPath);
+  const raw = readJsonFile(resolved);
+  if (!isObject(raw)) throw new Error(`Prompt setup must be a JSON object: ${resolved}`);
+
+  const llmRaw = isObject(raw.llm) ? raw.llm : {};
+  const llm = {
+    baseUrl: normalizeString(llmRaw.base_url),
+    apiKey: normalizeApiKey(llmRaw.api_key),
+    model: normalizeString(llmRaw.model),
+    maxTokens: parseIntLike(llmRaw.max_tokens, 0) ?? 0,
+    temperature: parseFloatLike(llmRaw.temperature, null),
+    topP: parseFloatLike(llmRaw.top_p, null),
+    topK: parseIntLike(llmRaw.top_k, null),
+    minP: parseFloatLike(llmRaw.min_p, null),
+    repetitionPenalty: parseFloatLike(llmRaw.repetition_penalty, null),
+    toolFormat: normalizeString(llmRaw.tool_format, { allowEmpty: true }) || 'tools', // tools|functions
+    timeoutMs: parseIntLike(llmRaw.timeout_ms, 120_000) ?? 120_000,
+  };
+  if (!llm.baseUrl) throw new Error(`Missing llm.base_url in ${resolved}`);
+  if (!llm.model) throw new Error(`Missing llm.model in ${resolved}`);
+
+  const serverRaw = isObject(raw.server) ? raw.server : {};
+  const server = {
+    host: normalizeString(serverRaw.host, { allowEmpty: true }) || '127.0.0.1',
+    port: parseIntLike(serverRaw.port, 9333) ?? 9333,
+    auditDir: resolvePath(baseDir, serverRaw.audit_dir || 'onchain/prompt/audit'),
+    autoApproveDefault: Boolean(serverRaw.auto_approve_default),
+    maxSteps: parseIntLike(serverRaw.max_steps, 12) ?? 12,
+  };
+  if (!Number.isFinite(server.port) || server.port <= 0) throw new Error(`Invalid server.port in ${resolved}`);
+
+  const scRaw = isObject(raw.sc_bridge) ? raw.sc_bridge : {};
+  const scBridge = {
+    url: normalizeString(scRaw.url, { allowEmpty: true }) || 'ws://127.0.0.1:49222',
+    token: readTokenMaybe({ token: scRaw.token, tokenFile: scRaw.token_file }, baseDir),
+  };
+  if (!scBridge.token) {
+    throw new Error(`Missing sc_bridge.token (or sc_bridge.token_file) in ${resolved}`);
+  }
+
+  const receiptsRaw = isObject(raw.receipts) ? raw.receipts : {};
+  const receipts = {
+    dbPath: resolvePath(baseDir, receiptsRaw.db || ''),
+  };
+
+  const lnRaw = isObject(raw.ln) ? raw.ln : {};
+  const ln = {
+    impl: normalizeString(lnRaw.impl, { allowEmpty: true }) || 'cln',
+    backend: normalizeString(lnRaw.backend, { allowEmpty: true }) || 'cli',
+    network: normalizeString(lnRaw.network, { allowEmpty: true }) || 'regtest',
+    composeFile: resolvePath(baseDir, lnRaw.compose_file || path.join('dev', 'ln-regtest', 'docker-compose.yml')),
+    service: normalizeString(lnRaw.service, { allowEmpty: true }) || '',
+    cliBin: normalizeString(lnRaw.cli_bin, { allowEmpty: true }) || '',
+    cwd: baseDir,
+    lnd: {
+      rpcserver: normalizeString(lnRaw?.lnd?.rpcserver, { allowEmpty: true }) || '',
+      tlscertpath: resolvePath(baseDir, lnRaw?.lnd?.tlscert || ''),
+      macaroonpath: resolvePath(baseDir, lnRaw?.lnd?.macaroon || ''),
+      lnddir: resolvePath(baseDir, lnRaw?.lnd?.dir || ''),
+    },
+  };
+
+  const solRaw = isObject(raw.solana) ? raw.solana : {};
+  const solana = {
+    rpcUrls: normalizeString(solRaw.rpc_url, { allowEmpty: true }) || 'http://127.0.0.1:8899',
+    commitment: normalizeString(solRaw.commitment, { allowEmpty: true }) || 'confirmed',
+    programId: normalizeString(solRaw.program_id, { allowEmpty: true }) || '',
+    keypairPath: resolvePath(baseDir, solRaw.keypair || ''),
+    computeUnitLimit: parseIntLike(solRaw.cu_limit, null),
+    computeUnitPriceMicroLamports: parseIntLike(solRaw.cu_price, null),
+  };
+
   return {
-    baseUrl: normalizeEmpty(env.INTERCOMSWAP_LLM_BASE_URL),
-    apiKey: normalizeApiKey(env.INTERCOMSWAP_LLM_API_KEY),
-    model: normalizeEmpty(env.INTERCOMSWAP_LLM_MODEL),
-
-    maxTokens: parseIntEnv(env.INTERCOMSWAP_LLM_MAX_TOKENS, 0),
-    temperature: parseFloatEnv(env.INTERCOMSWAP_LLM_TEMPERATURE, null),
-    topP: parseFloatEnv(env.INTERCOMSWAP_LLM_TOP_P, null),
-
-    // Non-OpenAI-standard params that some OpenAI-compatible servers accept.
-    topK: parseIntEnv(env.INTERCOMSWAP_LLM_TOP_K, null),
-    minP: parseFloatEnv(env.INTERCOMSWAP_LLM_MIN_P, null),
-    repetitionPenalty: parseFloatEnv(env.INTERCOMSWAP_LLM_REPETITION_PENALTY, null),
-
-    // Tool calling format. "tools" is the OpenAI current standard. Some servers only support "functions".
-    toolFormat: normalizeEmpty(env.INTERCOMSWAP_LLM_TOOL_FORMAT) || 'tools', // tools|functions
-
-    timeoutMs: parseIntEnv(env.INTERCOMSWAP_LLM_TIMEOUT_MS, 120_000),
+    configPath: resolved,
+    llm,
+    server,
+    scBridge,
+    receipts,
+    ln,
+    solana,
   };
 }
 

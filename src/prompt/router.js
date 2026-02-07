@@ -3,8 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { INTERCOMSWAP_SYSTEM_PROMPT } from './system.js';
 import { INTERCOMSWAP_TOOLS } from './tools.js';
 import { OpenAICompatibleClient } from './openaiClient.js';
-import { loadLlmConfigFromEnv } from './config.js';
 import { AuditLog } from './audit.js';
+import { SecretStore, isSecretHandle } from './secrets.js';
 
 function nowMs() {
   return Date.now();
@@ -31,21 +31,75 @@ function normalizeToolResponseMessage({ toolFormat, toolCall, result }) {
   };
 }
 
+function isObject(v) {
+  return v && typeof v === 'object' && !Array.isArray(v);
+}
+
+function shouldSealKey(key) {
+  const k = String(key || '').toLowerCase();
+  if (k.includes('preimage')) return true;
+  if (k.includes('invite')) return true;
+  if (k.includes('welcome')) return true;
+
+  // Credentials/secrets.
+  if (k.includes('api_key') || k.includes('apikey')) return true;
+  if (k.includes('authorization') || k === 'auth') return true;
+  if (k.includes('macaroon')) return true;
+  if (k.includes('seed')) return true;
+  if (k.includes('password')) return true;
+
+  return false;
+}
+
+// Ensures tool results sent back to the model do not include secrets.
+// Instead, secrets are replaced with opaque handles stored in the session SecretStore.
+function sealToolResultForModel(value, secrets, { path = '' } = {}) {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'bigint') return value.toString();
+
+  if (Array.isArray(value)) {
+    return value.map((v, i) => sealToolResultForModel(v, secrets, { path: `${path}[${i}]` }));
+  }
+
+  if (isObject(value)) {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      const nextPath = path ? `${path}.${k}` : k;
+      if (shouldSealKey(k) && v !== null && v !== undefined) {
+        // Avoid double-wrapping if tool already returns a handle.
+        if (typeof v === 'string' && isSecretHandle(v)) out[k] = v;
+        else out[k] = secrets.put(v, { key: k, path: nextPath });
+      } else {
+        out[k] = sealToolResultForModel(v, secrets, { path: nextPath });
+      }
+    }
+    return out;
+  }
+
+  // Fallback: attempt to serialize.
+  return safeJsonStringify(value);
+}
+
 export class PromptRouter {
   constructor({
-    llmConfig = null,
+    llmConfig,
     llmClient = null,
     toolExecutor,
     auditDir = 'onchain/prompt/audit',
     maxSteps = 12,
   }) {
     if (!toolExecutor) throw new Error('PromptRouter requires toolExecutor');
+    if (!llmConfig || typeof llmConfig !== 'object') throw new Error('PromptRouter requires llmConfig');
+    if (!llmConfig.baseUrl) throw new Error('PromptRouter requires llmConfig.baseUrl');
+    if (!llmConfig.model) throw new Error('PromptRouter requires llmConfig.model');
 
     this.toolExecutor = toolExecutor;
     this.auditDir = auditDir;
     this.maxSteps = maxSteps;
 
-    const cfg = llmConfig || loadLlmConfigFromEnv();
+    const cfg = llmConfig;
     this.llmConfig = cfg;
 
     this.llmClient =
@@ -64,7 +118,10 @@ export class PromptRouter {
   _getSession(sessionId) {
     const id = sessionId || randomUUID();
     if (!this._sessions.has(id)) {
-      this._sessions.set(id, { messages: [{ role: 'system', content: INTERCOMSWAP_SYSTEM_PROMPT }] });
+      this._sessions.set(id, {
+        messages: [{ role: 'system', content: INTERCOMSWAP_SYSTEM_PROMPT }],
+        secrets: new SecretStore(),
+      });
     }
     return { id, session: this._sessions.get(id) };
   }
@@ -135,20 +192,22 @@ export class PromptRouter {
           const toolResult = await this.toolExecutor.execute(call.name, call.arguments, {
             autoApprove,
             dryRun,
+            secrets: session.secrets,
           });
+          const toolResultForModel = sealToolResultForModel(toolResult, session.secrets);
           const toolStep = {
             type: 'tool',
             name: call.name,
             arguments: call.arguments,
             started_at: toolStartedAt,
             duration_ms: nowMs() - toolStartedAt,
-            result: toolResult,
+            result: toolResultForModel,
           };
           steps.push(toolStep);
           audit.write('tool_result', toolStep);
 
           // Append tool result as a message so the model can continue.
-          session.messages.push(normalizeToolResponseMessage({ toolFormat, toolCall: call, result: toolResult }));
+          session.messages.push(normalizeToolResponseMessage({ toolFormat, toolCall: call, result: toolResultForModel }));
         }
         continue;
       }
@@ -162,4 +221,3 @@ export class PromptRouter {
     throw new Error(`Max steps exceeded (${max})`);
   }
 }
-
