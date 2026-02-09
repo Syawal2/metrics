@@ -610,6 +610,115 @@ function App() {
     pushToast('error', `${actionLabel}: stack not ready\n\nMissing:\n${missing}`);
   }
 
+  async function ensureLnRegtestChannel() {
+    const lnBackend = String(envInfo?.ln?.backend || '');
+    const lnNetwork = String(envInfo?.ln?.network || '');
+    const isRegtestDocker = lnBackend === 'docker' && lnNetwork === 'regtest';
+    if (!isRegtestDocker) {
+      pushToast('error', 'LN regtest bootstrap is only available in docker+regtest mode.');
+      return;
+    }
+    if (runBusy || stackOpBusy) return;
+    const channels = Number(preflight?.ln_summary?.channels || 0);
+    const listfundsErr = String(preflight?.ln_listfunds_error || '').trim();
+    if (channels > 0 && !listfundsErr) {
+      pushToast('success', 'Lightning channel already exists');
+      return;
+    }
+    const ok =
+      autoApprove ||
+      window.confirm(
+        'Bootstrap LN regtest now?\n\nThis will mine blocks, fund both LN node wallets, and open a channel (docker-only).'
+      );
+    if (!ok) return;
+    pushToast('info', 'Bootstrapping LN regtest (mine+fund+open). This can take ~1 minute...', { ttlMs: 9000 });
+    const final = await runPromptStream({
+      prompt: JSON.stringify({ type: 'tool', name: 'intercomswap_ln_regtest_init', arguments: {} }),
+      session_id: sessionId,
+      auto_approve: true,
+      dry_run: false,
+    });
+    if (final && typeof final === 'object' && String((final as any).type || '') === 'error') {
+      pushToast('error', String((final as any).error || 'LN bootstrap failed'));
+    } else {
+      pushToast('success', 'Lightning ready');
+    }
+    void refreshPreflight();
+  }
+
+  async function ensureSolLocalValidator() {
+    const solKind = String(envInfo?.solana?.classify?.kind || '');
+    if (solKind !== 'local') {
+      pushToast('error', 'Local Solana bootstrap is only available when solana.rpc_url is localhost.');
+      return;
+    }
+    if (runBusy || stackOpBusy) return;
+    const ok =
+      autoApprove ||
+      window.confirm('Start local Solana validator now?\n\nThis will load the escrow program into solana-test-validator.');
+    if (!ok) return;
+    pushToast('info', 'Starting local Solana validator...', { ttlMs: 9000 });
+    const final = await runPromptStream({
+      prompt: JSON.stringify({ type: 'tool', name: 'intercomswap_sol_local_start', arguments: {} }),
+      session_id: sessionId,
+      auto_approve: true,
+      dry_run: false,
+    });
+    if (final && typeof final === 'object' && String((final as any).type || '') === 'error') {
+      pushToast('error', String((final as any).error || 'Solana local start failed'));
+    } else {
+      pushToast('success', 'Solana local validator ready');
+    }
+    void refreshPreflight();
+  }
+
+  function adoptOfferIntoRfqDraft(offerEvt: any) {
+    try {
+      const msg = offerEvt?.message;
+      const body = msg?.body;
+      const offers = Array.isArray(body?.offers) ? body.offers : [];
+      const o = offers[0] && typeof offers[0] === 'object' ? offers[0] : null;
+      if (!o) throw new Error('Offer has no offers[]');
+
+      const rfqChans = Array.isArray(body?.rfq_channels)
+        ? body.rfq_channels.map((c: any) => String(c || '').trim()).filter(Boolean)
+        : [];
+      const channel =
+        rfqChans[0] || String(offerEvt?.channel || '').trim() || scChannels.split(',')[0]?.trim() || '0000intercomswapbtcusdt';
+
+      const btcSats = Number(o?.btc_sats);
+      const usdtAmount = String(o?.usdt_amount || '').trim();
+      if (!Number.isInteger(btcSats) || btcSats < 1) throw new Error('Offer btc_sats invalid');
+      if (!/^[0-9]+$/.test(usdtAmount)) throw new Error('Offer usdt_amount invalid');
+
+      const maxPlatform = Number(o?.max_platform_fee_bps);
+      const maxTrade = Number(o?.max_trade_fee_bps);
+      const maxTotal = Number(o?.max_total_fee_bps);
+      const minWin = Number(o?.min_sol_refund_window_sec);
+      const maxWin = Number(o?.max_sol_refund_window_sec);
+
+      const nowSec = Math.floor(Date.now() / 1000);
+      const offerUntil = Number(body?.valid_until_unix);
+      const until = Number.isFinite(offerUntil) && offerUntil > nowSec + 60 ? Math.trunc(offerUntil) : nowSec + 24 * 3600;
+
+      setRfqChannel(channel);
+      setRfqTradeId(`rfq-${Date.now()}`);
+      setRfqBtcSats(btcSats);
+      setRfqUsdtAtomic(usdtAmount);
+      if (Number.isFinite(maxPlatform)) setRfqMaxPlatformFeeBps(Math.max(0, Math.trunc(maxPlatform)));
+      if (Number.isFinite(maxTrade)) setRfqMaxTradeFeeBps(Math.max(0, Math.trunc(maxTrade)));
+      if (Number.isFinite(maxTotal)) setRfqMaxTotalFeeBps(Math.max(0, Math.trunc(maxTotal)));
+      if (Number.isFinite(minWin)) setRfqMinSolRefundWindowSec(Math.max(0, Math.trunc(minWin)));
+      if (Number.isFinite(maxWin)) setRfqMaxSolRefundWindowSec(Math.max(0, Math.trunc(maxWin)));
+      setRfqValidUntilUnix(until);
+
+      setActiveTab('sell_btc');
+      pushToast('info', 'Offer loaded into New RFQ. Review then click “Post RFQ”.', { ttlMs: 6500 });
+    } catch (e: any) {
+      pushToast('error', e?.message || String(e));
+    }
+  }
+
   async function postOffer() {
     if (offerBusy) return;
     if (!stackGate.ok) return void stackBlockedToast('Post offer');
@@ -1171,14 +1280,25 @@ function App() {
 
 	    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-	    const isAbortLike = (err: any, msg: string) => {
-	      if (ac.signal.aborted) return true;
-	      if (err && typeof err === 'object') {
-	        if (String((err as any).name || '') === 'AbortError') return true;
-	      }
-	      if (/client_closed/i.test(msg)) return true;
-	      return false;
-	    };
+		    const isAbortLike = (err: any, msg: string) => {
+		      if (ac.signal.aborted) return true;
+		      if (err && typeof err === 'object') {
+		        if (String((err as any).name || '') === 'AbortError') return true;
+		      }
+		      if (/client_closed/i.test(msg)) return true;
+		      return false;
+		    };
+		    const isTransientNetErr = (msg: string) => {
+		      const s = String(msg || '');
+		      return (
+		        /BodyStreamBuffer was aborted/i.test(s) ||
+		        /Failed to fetch/i.test(s) ||
+		        /NetworkError/i.test(s) ||
+		        /Load failed/i.test(s) ||
+		        /socket hang up/i.test(s) ||
+		        /ECONNRESET/i.test(s)
+		      );
+		    };
 
 	    // Auto-reconnect loop: the feed is required for a safe human UX.
 	    let backoffMs = 450;
@@ -1210,12 +1330,13 @@ function App() {
 	              continue;
 	            }
 
-	            if (obj.type === 'sc_stream_open') {
-	              sawOpen = true;
-	              if (scStreamGenRef.current === gen) {
-	                setScConnected(true);
-	                setScConnecting(false);
-	                setScStreamErr(null);
+		            if (obj.type === 'sc_stream_open') {
+		              sawOpen = true;
+		              backoffMs = 450;
+		              if (scStreamGenRef.current === gen) {
+		                setScConnected(true);
+		                setScConnecting(false);
+		                setScStreamErr(null);
 	              }
 	              continue;
 	            }
@@ -1238,28 +1359,32 @@ function App() {
 	            await appendScEvent(obj, { persist: false });
 	          }
 	        }
-	      } catch (err: any) {
-	        const msg = err?.message || String(err);
-	        if (isAbortLike(err, msg)) break;
+		      } catch (err: any) {
+		        const msg = err?.message || String(err);
+		        if (isAbortLike(err, msg)) break;
+		        const transient = isTransientNetErr(msg);
 
-	        // Only update state if this is still the active stream.
-	        if (scStreamGenRef.current === gen) {
-	          setScConnected(false);
-	          setScConnecting(true);
-	          setScStreamErr(msg);
-	        }
-	        await appendScEvent({ type: 'error', ts: Date.now(), error: msg }, { persist: false });
-	      }
+		        // Only update state if this is still the active stream.
+		        if (scStreamGenRef.current === gen) {
+		          setScConnected(false);
+		          setScConnecting(true);
+		          setScStreamErr(transient ? null : msg);
+		        }
+		        if (!transient) {
+		          await appendScEvent({ type: 'error', ts: Date.now(), error: msg }, { persist: false });
+		        }
+		      }
 
 	      // Stream ended (disconnect) without abort. Reconnect with backoff.
 	      if (ac.signal.aborted || !scStreamWantedRef.current || scStreamGenRef.current !== gen) break;
 
-	      const msg = sawOpen ? 'sc/stream disconnected (reconnecting...)' : 'sc/stream ended before open (reconnecting...)';
-	      if (scStreamGenRef.current === gen) {
-	        setScConnected(false);
-	        setScConnecting(true);
-	        setScStreamErr(msg);
-	      }
+		      const msg = sawOpen ? 'sc/stream disconnected (reconnecting...)' : 'sc/stream ended before open (reconnecting...)';
+		      if (scStreamGenRef.current === gen) {
+		        setScConnected(false);
+		        setScConnecting(true);
+		        // Disconnects can happen on flaky networks; reconnect silently.
+		        setScStreamErr(null);
+		      }
 	      await appendScEvent({ type: 'ui', ts: Date.now(), message: msg }, { persist: false });
 
 	      await sleep(backoffMs);
@@ -1537,6 +1662,15 @@ function App() {
   const lnNodeId = lnInfoObj ? String((lnInfoObj as any).id || (lnInfoObj as any).identity_pubkey || '').trim() : '';
   const lnNodeIdShort = lnNodeId ? `${lnNodeId.slice(0, 16)}…` : '';
   const solSignerPubkey = String(preflight?.sol_signer?.pubkey || '').trim();
+  const lnChannelCount = Number(preflight?.ln_summary?.channels || 0);
+  const lnBackend = String(envInfo?.ln?.backend || '');
+  const lnNetwork = String(envInfo?.ln?.network || '');
+  const isLnRegtestDocker = lnBackend === 'docker' && lnNetwork === 'regtest';
+  const solKind = String(preflight?.env?.solana?.classify?.kind || envInfo?.solana?.classify?.kind || '');
+  const solLocalUp = solKind !== 'local' || Boolean(preflight?.sol_local_status?.rpc_listening);
+  const solConfigOk = !preflight?.sol_config_error;
+  const needSolLocalStart = solKind === 'local' && !solLocalUp;
+  const needLnBootstrap = isLnRegtestDocker && (lnChannelCount < 1 || Boolean(preflight?.ln_listfunds_error));
 
 	  return (
 	    <div
@@ -1612,18 +1746,43 @@ function App() {
                 </button>
               </div>
 
+	              {!stackGate.ok ? (
+	                <div className="alert bad">
+	                  <b>STACK BLOCKED.</b> Trading tools are disabled until everything is green:
+	                  <div className="muted small" style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>
+	                    {stackGate.reasons.length > 0 ? stackGate.reasons.map((r) => `- ${r}`).join('\n') : '- unknown'}
+	                  </div>
+	                </div>
+	              ) : (
+	                <div className="alert">
+	                  <span className="chip hi">READY</span> You can post Offers (Sell USDT) and RFQs (Sell BTC).
+	                </div>
+	              )}
+
               {!stackGate.ok ? (
-                <div className="alert bad">
-                  <b>STACK BLOCKED.</b> Trading tools are disabled until everything is green:
-                  <div className="muted small" style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>
-                    {stackGate.reasons.length > 0 ? stackGate.reasons.map((r) => `- ${r}`).join('\n') : '- unknown'}
-                  </div>
+                <div className="row">
+                  {!scConnected ? (
+                    <button className="btn primary" onClick={startScStream} disabled={!health?.ok || stackOpBusy}>
+                      {scConnecting ? 'Connecting feed…' : 'Connect feed'}
+                    </button>
+                  ) : null}
+                  {needLnBootstrap ? (
+                    <button className="btn primary" onClick={ensureLnRegtestChannel} disabled={runBusy || stackOpBusy}>
+                      Bootstrap LN regtest
+                    </button>
+                  ) : null}
+                  {needSolLocalStart ? (
+                    <button className="btn primary" onClick={ensureSolLocalValidator} disabled={runBusy || stackOpBusy}>
+                      Start Solana local
+                    </button>
+                  ) : null}
+                  {!solConfigOk && solKind === 'local' && solLocalUp ? (
+                    <button className="btn" onClick={refreshPreflight} disabled={preflightBusy}>
+                      Retry Solana config
+                    </button>
+                  ) : null}
                 </div>
-              ) : (
-                <div className="alert">
-                  <span className="chip hi">READY</span> You can post Offers (Sell USDT) and RFQs (Sell BTC).
-                </div>
-              )}
+              ) : null}
 
               <div className="field">
                 <div className="field-hd">
@@ -1693,21 +1852,23 @@ function App() {
                 {solBalanceErr ? <div className="alert bad">{solBalanceErr}</div> : null}
               </div>
 
-              <div className="field">
-                <div className="field-hd">
-                  <span className="mono">Lightning Channel</span>
-                </div>
-                <div className="row">
-                  {preflight?.ln_summary?.channels > 0 ? (
-                    <span className="chip hi">{preflight.ln_summary.channels} channel(s)</span>
-                  ) : (
-                    <span className="chip warn">no channels</span>
-                  )}
-                  <button className="btn" onClick={() => setActiveTab('wallets')}>
-                    Open channel…
-                  </button>
-                </div>
-              </div>
+	              <div className="field">
+	                <div className="field-hd">
+	                  <span className="mono">Lightning Channel</span>
+	                </div>
+	                <div className="row">
+	                  {lnChannelCount > 0 ? <span className="chip hi">{lnChannelCount} channel(s)</span> : <span className="chip warn">no channels</span>}
+	                  {needLnBootstrap ? (
+	                    <button className="btn primary" onClick={ensureLnRegtestChannel} disabled={runBusy || stackOpBusy}>
+	                      Bootstrap regtest
+	                    </button>
+	                  ) : (
+	                    <button className="btn" onClick={() => setActiveTab('wallets')}>
+	                      Open channel…
+	                    </button>
+	                  )}
+	                </div>
+	              </div>
             </Panel>
 
 	            <Panel title="Live Feed">
@@ -1725,7 +1886,7 @@ function App() {
 	                  {scConnected || scConnecting ? 'Reconnect' : 'Connect'}
 	                </button>
 	              </div>
-	              {scStreamErr ? <div className="alert bad">sc/stream: {scStreamErr}</div> : null}
+		              {scStreamErr ? <div className="alert bad">feed: {scStreamErr}</div> : null}
               <div className="row">
                 <input
                   className="input"
@@ -2001,13 +2162,13 @@ function App() {
                       <span className="mono dim">{typeof it.count === 'number' ? it.count : ''}</span>
                     </div>
                   ) : (
-                    <OfferRow
-                      evt={it.evt}
-                      badge={it.badge || ''}
-                      showRespond={false}
-                      onSelect={() => setSelected({ type: it.badge ? 'offer_posted' : 'offer', evt: it.evt })}
-                      onRespond={() => {}}
-                    />
+	                    <OfferRow
+	                      evt={it.evt}
+	                      badge={it.badge || ''}
+	                      showRespond={!it.badge}
+	                      onSelect={() => setSelected({ type: it.badge ? 'offer_posted' : 'offer', evt: it.evt })}
+	                      onRespond={() => adoptOfferIntoRfqDraft(it.evt)}
+	                    />
                   )
                 }
               />
@@ -2610,41 +2771,17 @@ function App() {
                 node: <span className="mono">{lnAlias || '—'}</span> · id:{' '}
                 <span className="mono">{lnNodeIdShort || '—'}</span>
               </div>
-              <div className="row">
-                {preflight?.ln_summary?.channels > 0 ? (
-                  <span className="chip hi">{preflight.ln_summary.channels} channel(s)</span>
-                ) : (
-                  <span className="chip warn">no channels</span>
-                )}
-              </div>
+	              <div className="row">
+	                {lnChannelCount > 0 ? <span className="chip hi">{lnChannelCount} channel(s)</span> : <span className="chip warn">no channels</span>}
+	              </div>
 
-	              {String(envInfo?.ln?.backend || '') === 'docker' && String(envInfo?.ln?.network || '') === 'regtest' ? (
+	              {isLnRegtestDocker ? (
 	                <button
 	                  className="btn primary"
-	                  disabled={runBusy}
-	                  onClick={async () => {
-	                    const ok =
-	                      autoApprove ||
-	                      window.confirm(
-	                        'Bootstrap LN regtest now?\n\nThis will mine blocks, fund both LN node wallets, and open a channel (docker-only).'
-	                      );
-	                    if (!ok) return;
-	                    pushToast('info', 'Bootstrapping LN regtest (mine+fund+open). This can take ~1 minute...', { ttlMs: 9000 });
-	                    const final = await runPromptStream({
-	                      prompt: JSON.stringify({ type: 'tool', name: 'intercomswap_ln_regtest_init', arguments: {} }),
-	                      session_id: sessionId,
-	                      auto_approve: true,
-	                      dry_run: false,
-	                    });
-	                    if (final && typeof final === 'object' && String((final as any).type || '') === 'error') {
-	                      pushToast('error', String((final as any).error || 'LN bootstrap failed'));
-	                    } else {
-	                      pushToast('success', 'LN regtest ready');
-	                    }
-	                    void refreshPreflight();
-	                  }}
+	                  disabled={runBusy || (lnChannelCount > 0 && !preflight?.ln_listfunds_error)}
+	                  onClick={() => void ensureLnRegtestChannel()}
 	                >
-	                  Ensure regtest channel (mine+fund+open)
+	                  {lnChannelCount > 0 ? 'Regtest channel ready' : 'Bootstrap regtest (mine+fund+open)'}
 	                </button>
 	              ) : null}
 
