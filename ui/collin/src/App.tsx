@@ -694,11 +694,13 @@ function App() {
 						await appendScEvent({ type: 'parse_error', ts: Date.now(), line }, { persist: false });
 						continue;
 					}
-					if (obj.type === 'sc_stream_open') sawOpen = true;
-					if (obj.type === 'sc_event') {
-						const msg = obj.message;
-						const d = deriveKindTrade(msg);
-						await appendScEvent({ ...obj, ...d }, { persist: true });
+						if (obj.type === 'sc_stream_open') sawOpen = true;
+            // Heartbeats are transport-level keepalives; don’t pollute the operator log.
+            if (obj.type === 'heartbeat') continue;
+						if (obj.type === 'sc_event') {
+							const msg = obj.message;
+							const d = deriveKindTrade(msg);
+							await appendScEvent({ ...obj, ...d }, { persist: true });
 					} else if (obj.type === 'error') {
 						const errMsg = String(obj?.error || 'sc/stream error');
 						hadError = true;
@@ -3566,8 +3568,11 @@ function VirtualList({
           return (
             <div
               key={v.key}
+              data-index={v.index}
+              // Dynamic row heights: measure actual DOM and let the virtualizer reflow.
+              ref={rowVirtualizer.measureElement}
               className="vrow"
-              style={{ transform: `translateY(${v.start}px)`, height: `${v.size}px` }}
+              style={{ transform: `translateY(${v.start}px)` }}
             >
               {render(item)}
             </div>

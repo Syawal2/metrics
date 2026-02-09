@@ -23,17 +23,18 @@
 
 .shell {
   --nav-w: 260px;
-  --insp-w: 340px;
-  --prompt-h: 280px;
+  --console-w: 340px;
+  --console-h: 280px;
+  --inspector-h: 280px;
 
   height: 100%;
   display: grid;
-  grid-template-rows: 66px 1fr var(--prompt-h);
-  grid-template-columns: var(--nav-w) 1fr var(--insp-w);
+  grid-template-rows: 66px 1fr var(--inspector-h);
+  grid-template-columns: var(--nav-w) 1fr var(--console-w);
   grid-template-areas:
     "topbar topbar topbar"
-    "nav main inspector"
-    "prompt prompt prompt";
+    "nav main prompt"
+    "inspector inspector inspector";
   gap: 12px;
   padding: 12px;
 }
@@ -42,10 +43,11 @@
   --nav-w: 0px;
 }
 .shell.inspector-closed {
-  --insp-w: 0px;
+  --inspector-h: 0px;
 }
 .shell.prompt-closed {
-  --prompt-h: 44px;
+  --console-w: 0px;
+  --console-h: 44px;
 }
 
 .topbar {
@@ -430,9 +432,11 @@
 }
 .vrow {
   position: absolute;
+  top: 0;
   left: 0;
   right: 0;
   padding: 6px;
+  will-change: transform;
 }
 
 .rowitem {
@@ -626,7 +630,7 @@
 @media (max-width: 980px) {
   .shell {
     grid-template-columns: 1fr;
-    grid-template-rows: 66px 1fr var(--prompt-h);
+    grid-template-rows: 66px 1fr var(--console-h);
     grid-template-areas:
       "topbar"
       "main"
@@ -636,7 +640,7 @@
   .inspector {
     position: fixed;
     top: 84px;
-    bottom: calc(var(--prompt-h) + 12px);
+    bottom: calc(var(--console-h) + 12px);
     width: min(320px, calc(100vw - 24px));
     z-index: 40;
     box-shadow: var(--shadow);
