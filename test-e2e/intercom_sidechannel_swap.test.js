@@ -388,6 +388,11 @@ test('e2e: sidechannel swap protocol + LN regtest + Solana escrow', async (t) =>
   const soPath = path.join(repoRoot, 'solana/ln_usdt_escrow/target/deploy/ln_usdt_escrow.so');
 
   // Start LN stack.
+  // Ensure a clean slate: a previously crashed lightningd can leave a stale lightning-rpc socket in the volume
+  // which causes lightning-cli ECONNREFUSED on startup.
+  try {
+    await dockerCompose(['down', '-v', '--remove-orphans']);
+  } catch (_e) {}
   await dockerCompose(['up', '-d']);
   t.after(async () => {
     try {
