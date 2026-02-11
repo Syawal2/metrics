@@ -114,6 +114,44 @@ test('tradeauto: settlement can start from synthetic swap context (no prior swap
   }
 });
 
+test('tradeauto: start while running can enable trace immediately', async () => {
+  const mgr = new TradeAutoManager({
+    scLogInfo: () => ({ latest_seq: 0 }),
+    scLogRead: () => ({ latest_seq: 0, events: [] }),
+    runTool: async ({ tool }) => {
+      if (tool === 'intercomswap_sc_subscribe') return { type: 'subscribed' };
+      if (tool === 'intercomswap_sc_info') return { peer: MAKER };
+      if (tool === 'intercomswap_sol_signer_pubkey') return { pubkey: SOL_RECIPIENT };
+      if (tool === 'intercomswap_sc_stats') return { channels: [] };
+      throw new Error(`unexpected tool: ${tool}`);
+    },
+  });
+
+  try {
+    const started = await mgr.start({
+      channels: ['0000intercomswapbtcusdt'],
+      trace_enabled: false,
+      enable_quote_from_offers: false,
+      enable_quote_from_rfqs: false,
+      enable_accept_quotes: false,
+      enable_invite_from_accepts: false,
+      enable_join_invites: false,
+      enable_settlement: false,
+    });
+    assert.equal(Boolean(started.running), true);
+    assert.equal(Boolean(started.trace_enabled), false);
+
+    const rerun = await mgr.start({ trace_enabled: true });
+    assert.equal(rerun.type, 'tradeauto_already_running');
+    assert.equal(Boolean(rerun.trace_enabled), true);
+
+    const recent = Array.isArray(rerun?.recent_events) ? rerun.recent_events : [];
+    assert.equal(recent.some((e) => String(e?.type || '') === 'trace_enabled_runtime'), true);
+  } finally {
+    await mgr.stop({ reason: 'test_done' });
+  }
+});
+
 test('tradeauto: settlement resolves local peer from sc_info.info.peerPubkey', async () => {
   const tradeId = 'swap_test_local_peer_info_shape';
   const sent = [];

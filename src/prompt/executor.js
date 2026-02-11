@@ -4498,12 +4498,13 @@ export class ToolExecutor {
         }
       } catch (_e) {}
 
-      // Guardrail: private-only active topology without route hints is very likely unroutable for counterparties.
-      if (lnImpl === 'lnd' && activePrivate > 0 && activePublic < 1 && routeHintCount === 0) {
-        throw new Error(
-          `${toolName}: generated invoice has no route hints while only private active channels are available; this is likely unroutable (NO_ROUTE).`
-        );
-      }
+      // Guardrail (soft): private-only active topology without route hints is often unroutable,
+      // but direct private peer-to-peer channels can still succeed without route hints.
+      // Keep settlement moving and surface the risk as a warning instead of hard-failing here.
+      const routeHintsWarning =
+        lnImpl === 'lnd' && activePrivate > 0 && activePublic < 1 && routeHintCount === 0
+          ? `${toolName}: generated invoice has no route hints while only private active channels are available; payment may fail with NO_ROUTE unless the payer has a direct/private route to this node.`
+          : null;
 
       const unsigned = createUnsignedEnvelope({
         v: 1,
@@ -4548,6 +4549,7 @@ export class ToolExecutor {
         payment_hash_hex: paymentHashHex,
         bolt11,
         expires_at_unix: expiresAtUnix,
+        route_hints_warning: routeHintsWarning,
         envelope_handle: envHandle,
         envelope: envHandle ? null : signed,
       };

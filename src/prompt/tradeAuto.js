@@ -329,6 +329,16 @@ export class TradeAutoManager {
 
   async start(opts = {}) {
     if (this.running) {
+      // Allow idempotent "start" calls to reconfigure trace mode while running.
+      if (Object.prototype.hasOwnProperty.call(opts, 'trace_enabled')) {
+        const prev = this._traceEnabled === true;
+        const next = opts.trace_enabled === true;
+        this._traceEnabled = next;
+        if (this.opts && typeof this.opts === 'object') this.opts.trace_enabled = next;
+        if (!prev && next) {
+          this._trace('trace_enabled_runtime', { running: true });
+        }
+      }
       return { ...this.status(), type: 'tradeauto_already_running' };
     }
 
