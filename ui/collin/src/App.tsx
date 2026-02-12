@@ -1334,6 +1334,28 @@ function App() {
     return out;
   }, [scEvents, terminalReceiptTradeIdsSet]);
 
+  const isTerminalTrade = (trade: any): boolean => {
+    const tradeId = String(trade?.trade_id || '').trim();
+    const state = String(trade?.state || '').trim().toLowerCase();
+    if (
+      state === 'claimed' ||
+      state === 'refunded' ||
+      state === 'canceled' ||
+      state === 'cancelled' ||
+      state === 'failed' ||
+      state === 'expired'
+    ) {
+      return true;
+    }
+    return Boolean(tradeId && terminalTradeIdsSet.has(tradeId));
+  };
+
+  useEffect(() => {
+    if (terminalTradeIdsSet.size < 1) return;
+    setOpenRefunds((prev) => prev.filter((t) => !terminalTradeIdsSet.has(String(t?.trade_id || '').trim())));
+    setOpenClaims((prev) => prev.filter((t) => !terminalTradeIdsSet.has(String(t?.trade_id || '').trim())));
+  }, [terminalTradeIdsSet]);
+
   const rendezvousChannels = useMemo(
     () => normalizeChannels(scChannels.split(',').map((s) => s.trim()).filter(Boolean), { max: 50, dropSwapTradeChannels: true }),
     [scChannels]
@@ -2386,6 +2408,7 @@ function App() {
 
     if (state === 'claimed') return void pushToast('success', `Already claimed (${trade_id})`);
     if (state === 'refunded') return void pushToast('info', `Already refunded (${trade_id})`);
+    if (isTerminalTrade(trade)) return void pushToast('info', `Trade already finalized (${trade_id})`);
     if (state !== 'ln_paid') return void pushToast('info', `Not claimable yet (state=${state || '?'})`);
     if (!preimage) return void pushToast('error', `Cannot claim: missing LN preimage in receipts (${trade_id})`);
 
@@ -2429,6 +2452,7 @@ function App() {
 
     if (state === 'refunded') return void pushToast('success', `Already refunded (${trade_id})`);
     if (state === 'claimed') return void pushToast('info', `Already claimed (${trade_id})`);
+    if (isTerminalTrade(trade)) return void pushToast('info', `Trade already finalized (${trade_id})`);
     if (state !== 'escrow') return void pushToast('info', `Not refundable yet (state=${state || '?'})`);
     if (!refundAfter || !Number.isFinite(refundAfter) || refundAfter <= 0) {
       return void pushToast('info', `Refund not yet available (missing refund_after_unix) (${trade_id})`);
@@ -3785,11 +3809,16 @@ function App() {
       );
       const arr = Array.isArray(page) ? page : [];
       setOpenRefunds((prev) => {
-        const next = reset ? [] : prev;
+        const next = (reset ? [] : prev).filter((t) => {
+          const id = String(t?.trade_id || '').trim();
+          if (!id) return false;
+          return !terminalTradeIdsSet.has(id);
+        });
         const seen = new Set(next.map((t) => String(t?.trade_id || '')).filter(Boolean));
         const toAdd = arr.filter((t) => {
           const id = String(t?.trade_id || '').trim();
           if (!id) return false;
+          if (terminalTradeIdsSet.has(id)) return false;
           if (seen.has(id)) return false;
           seen.add(id);
           return true;
@@ -3822,11 +3851,16 @@ function App() {
       );
       const arr = Array.isArray(page) ? page : [];
       setOpenClaims((prev) => {
-        const next = reset ? [] : prev;
+        const next = (reset ? [] : prev).filter((t) => {
+          const id = String(t?.trade_id || '').trim();
+          if (!id) return false;
+          return !terminalTradeIdsSet.has(id);
+        });
         const seen = new Set(next.map((t) => String(t?.trade_id || '')).filter(Boolean));
         const toAdd = arr.filter((t) => {
           const id = String(t?.trade_id || '').trim();
           if (!id) return false;
+          if (terminalTradeIdsSet.has(id)) return false;
           if (seen.has(id)) return false;
           seen.add(id);
           return true;
@@ -6642,6 +6676,7 @@ function App() {
 	                  <TradeRow
 	                    trade={t}
 	                    oracle={oracle}
+	                    terminalTradeIdsSet={terminalTradeIdsSet}
 	                    selected={selected?.type === 'trade' && selected?.trade?.trade_id === t?.trade_id}
 	                    onSelect={() => setSelected({ type: 'trade', trade: t })}
 	                    onRecoverClaim={() => void recoverClaimForTrade(t)}
@@ -6790,6 +6825,7 @@ function App() {
 	                  <TradeRow
 	                    trade={t}
 	                    oracle={oracle}
+	                    terminalTradeIdsSet={terminalTradeIdsSet}
 	                    selected={selected?.type === 'trade' && selected?.trade?.trade_id === t?.trade_id}
 	                    onSelect={() => setSelected({ type: 'trade', trade: t })}
 	                    onRecoverClaim={() => void recoverClaimForTrade(t)}
@@ -6823,6 +6859,7 @@ function App() {
 	                  <TradeRow
 	                    trade={t}
 	                    oracle={oracle}
+	                    terminalTradeIdsSet={terminalTradeIdsSet}
 	                    selected={selected?.type === 'trade' && selected?.trade?.trade_id === t?.trade_id}
 	                    onSelect={() => setSelected({ type: 'trade', trade: t })}
 	                    onRecoverClaim={() => void recoverClaimForTrade(t)}
@@ -9793,6 +9830,7 @@ function InviteRow({
 function TradeRow({
   trade,
   oracle,
+  terminalTradeIdsSet,
   selected,
   onSelect,
   onRecoverClaim,
@@ -9800,12 +9838,15 @@ function TradeRow({
 }: {
   trade: any;
   oracle?: OracleSummary;
+  terminalTradeIdsSet?: ReadonlySet<string>;
   selected: boolean;
   onSelect: () => void;
   onRecoverClaim: () => void;
   onRecoverRefund: () => void;
 }) {
+  const tradeId = String(trade?.trade_id || '').trim();
   const state = String(trade?.state || '').trim();
+  const stateLower = state.toLowerCase();
   const role = String(trade?.role || '').trim();
   const sats = typeof trade?.btc_sats === 'number' ? trade.btc_sats : null;
   const usdtAtomic = typeof trade?.usdt_amount === 'string' ? trade.usdt_amount : '';
@@ -9819,10 +9860,19 @@ function TradeRow({
     : usdtAtomic ? atomicToDecimal(usdtAtomic, 6) : '?';
   const pricePerBtc = btcBtc !== null && btcBtc > 0 && usdtNum !== null ? usdtNum / btcBtc : null;
   const priceDisplay = pricePerBtc !== null ? formatHumanNumber(pricePerBtc, { maxFractionDigits: 2 }) : null;
-  const expired = state === 'expired' || state === 'failed' || state === 'refunded';
+  const terminalByState =
+    stateLower === 'claimed' ||
+    stateLower === 'refunded' ||
+    stateLower === 'canceled' ||
+    stateLower === 'cancelled' ||
+    stateLower === 'failed' ||
+    stateLower === 'expired';
+  const terminal = terminalByState || Boolean(tradeId && terminalTradeIdsSet?.has(tradeId));
+  const expired = terminal;
 
-  const canClaim = state === 'ln_paid' && Boolean(String(trade?.ln_preimage_hex || '').trim());
-  const canRefund = state === 'escrow' && trade?.sol_refund_after_unix !== null && trade?.sol_refund_after_unix !== undefined;
+  const canClaim = !terminal && stateLower === 'ln_paid' && Boolean(String(trade?.ln_preimage_hex || '').trim());
+  const canRefund =
+    !terminal && stateLower === 'escrow' && trade?.sol_refund_after_unix !== null && trade?.sol_refund_after_unix !== undefined;
 
   return (
     <div className={`rowitem ${selected ? 'selected' : ''} ${expired ? 'expired' : ''}`} role="button" onClick={onSelect}>
