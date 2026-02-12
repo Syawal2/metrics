@@ -598,6 +598,17 @@ async function runLnRoutePrecheck({
   requireDecodedInvoice = false,
   requireRoutingSnapshot = false,
 }) {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const isNoRouteText = (value) => {
+    const lower = String(value || '').toLowerCase();
+    return (
+      lower.includes('unable to find a path') ||
+      lower.includes('no route') ||
+      lower.includes('no_route') ||
+      lower.includes('route not found') ||
+      lower.includes('unable to route')
+    );
+  };
   const lnImpl = String(ln?.impl || '').trim().toLowerCase();
   const termsLnReceiverPeer = String(termsBody?.ln_receiver_peer || '').trim().toLowerCase();
 
@@ -631,7 +642,6 @@ async function runLnRoutePrecheck({
   let routingRows = [];
   let routingSummary = null;
   let routingErr = null;
-  let activePublic = 0;
   let directActiveChannel = null;
   try {
     const [listFunds, listChannels] = await Promise.all([lnListFunds(ln), lnListChannels(ln)]);
@@ -639,7 +649,6 @@ async function runLnRoutePrecheck({
     routingSummary = summarizeLnLiquidity(routingRows);
     for (const row of routingRows) {
       if (!row?.active) continue;
-      if (!row?.private) activePublic += 1;
       if (destinationPubkey && String(row?.peer || '').trim().toLowerCase() === destinationPubkey) {
         const local = typeof row.local_sats === 'bigint' ? row.local_sats : 0n;
         if (!directActiveChannel || local > directActiveChannel.local_sats) {
@@ -681,17 +690,6 @@ async function runLnRoutePrecheck({
       })`
     );
   }
-  if (
-    lnImpl === 'lnd' &&
-    destinationPubkey &&
-    Number(activePublic || 0) < 1 &&
-    Number(routeHintCount || 0) < 1 &&
-    !directActiveChannel
-  ) {
-    throw new Error(
-      `${toolName}: unroutable invoice precheck: destination ${destinationPubkey} has no route hints and this node has no direct active channel to destination`
-    );
-  }
 
   // Graph route precheck (LND): if we have no route hints and no direct-sufficient channel,
   // verify that the node can find at least one graph route to the invoice destination.
@@ -713,45 +711,35 @@ async function runLnRoutePrecheck({
   ) {
     const amt = toSafeNumber(requiredBtcSats);
     if (amt !== null) {
-      try {
-        const qr = await lnQueryRoutes(ln, { destinationPubkey, amtSats: amt, numRoutes: 1 });
-        const routes = Array.isArray(qr?.routes) ? qr.routes : [];
-        if (routes.length < 1) {
-          throw new Error(`${toolName}: unroutable invoice precheck: queryroutes returned 0 routes to destination ${destinationPubkey}`);
+      const queryRoutesAttempts = 3;
+      const queryRoutesRetryDelayMs = 1_500;
+      let routeFound = false;
+      let lastNoRouteErr = '';
+      for (let attempt = 1; attempt <= queryRoutesAttempts; attempt += 1) {
+        try {
+          const qr = await lnQueryRoutes(ln, { destinationPubkey, amtSats: amt, numRoutes: 1 });
+          const routes = Array.isArray(qr?.routes) ? qr.routes : [];
+          if (routes.length > 0) {
+            routeFound = true;
+            break;
+          }
+          lastNoRouteErr = `${toolName}: unroutable invoice precheck: queryroutes returned 0 routes to destination ${destinationPubkey}`;
+        } catch (err) {
+          const msg = String(err?.message || err || '');
+          if (!isNoRouteText(msg)) {
+            throw new Error(`${toolName}: ln route precheck unavailable: queryroutes failed (${normalizeTraceText(msg, { max: 220 })})`);
+          }
+          lastNoRouteErr = `${toolName}: unroutable invoice precheck: queryroutes found no route to destination ${destinationPubkey}`;
         }
-      } catch (err) {
-        const msg = String(err?.message || err || '');
-        const lower = msg.toLowerCase();
-        const noRoute =
-          lower.includes('unable to find a path') ||
-          lower.includes('no route') ||
-          lower.includes('no_route') ||
-          lower.includes('route not found') ||
-          lower.includes('unable to route');
-        if (noRoute) {
-          throw new Error(`${toolName}: unroutable invoice precheck: queryroutes found no route to destination ${destinationPubkey}`);
+        if (attempt < queryRoutesAttempts) {
+          await sleep(queryRoutesRetryDelayMs);
         }
-        throw new Error(`${toolName}: ln route precheck unavailable: queryroutes failed (${normalizeTraceText(msg, { max: 220 })})`);
       }
-    }
-  }
-  // Conservative guardrail: with only one active channel and no hints/direct path,
-  // routed payments are frequently unroutable in practice even if a graph route exists.
-  // Prefer failing precheck early so maker does not lock USDT into escrow.
-  if (
-    lnImpl === 'lnd' &&
-    routingSummary &&
-    Number(routingSummary.channels_active || 0) < 2 &&
-    Number(routeHintCount || 0) < 1
-  ) {
-    // One-channel nodes frequently hit NO_ROUTE even when a graph route exists.
-    // However, a direct active channel to the destination with sufficient local balance
-    // is usually deterministic enough to allow.
-    const directCanPay = directCanPayForRequired;
-    if (!directCanPay) {
-      throw new Error(
-        `${toolName}: unroutable invoice precheck: payer has only one active channel and invoice has no route hints (high NO_ROUTE risk; need >=2 active channels or route hints/direct-sufficient channel)`
-      );
+      if (!routeFound) {
+        throw new Error(
+          `${lastNoRouteErr || `${toolName}: unroutable invoice precheck: queryroutes found no route to destination ${destinationPubkey}`} after ${queryRoutesAttempts} attempt(s)`
+        );
+      }
     }
   }
 
