@@ -2111,6 +2111,7 @@ function App() {
 	    }
 	  }
 
+
   async function setTradeLoggingMode(next: boolean) {
     if (runBusy || stackOpBusy) return;
     setRunBusy(true);
@@ -4535,7 +4536,7 @@ function App() {
 	            ☰
 	          </button>
 	          <div className="logo">
-	            <AnimatedLogo text="Collin" tagline="control center" />
+	            <AnimatedLogo text="COLLIN" tagline="control center" />
 	          </div>
 	        </div>
 	        <div className="topbar-right">
@@ -4812,16 +4813,16 @@ function App() {
 
             <Panel title="Trade Automation Trace (Backend)">
               <div className="row">
-                <span className={`chip ${tradeAutoTraceEnabled ? 'hi' : 'warn'}`}>
-                  {tradeAutoTraceEnabled ? 'trace on' : 'trace off'}
-                </span>
                 <button
-                  className={`btn ${tradeAutoTraceEnabled ? 'ghost' : 'primary'}`}
+                  className={`btn small ${tradeAutoTraceEnabled ? 'ghost' : 'primary'}`}
                   onClick={() => void setTradeLoggingMode(!tradeAutoTraceEnabled)}
                   disabled={runBusy || stackOpBusy}
                 >
                   {tradeAutoTraceEnabled ? 'Disable Trade Logging' : 'Enable Trade Logging'}
                 </button>
+                <span className={`chip ${tradeAutoTraceEnabled ? 'hi' : 'warn'}`}>
+                  {tradeAutoTraceEnabled ? 'trace on' : 'trace off'}
+                </span>
                 <span className={`chip ${tradeAutoStatus?.running ? 'hi' : 'warn'}`}>
                   {tradeAutoStatus?.running ? 'worker on' : 'worker off'}
                 </span>
@@ -5467,7 +5468,6 @@ function App() {
 	                    <OfferRow
 	                      evt={it.evt}
 	                      oracle={oracle}
-	                      badge={it.badge || ''}
 	                      showRespond={false}
 	                      onSelect={() => setSelected({ type: it.badge ? 'offer_posted' : 'offer', evt: it.evt })}
 	                      onRespond={() => {}}
@@ -5476,7 +5476,6 @@ function App() {
 	                    <RfqRow
 	                      evt={it.evt}
 	                      oracle={oracle}
-	                      badge={it.badge || ''}
 	                      showQuote={!it.badge}
 	                      onSelect={() => setSelected({ type: it.badge ? 'rfq_posted' : 'rfq', evt: it.evt })}
 	                      onQuote={() => {
@@ -5930,7 +5929,6 @@ function App() {
 	                    <OfferRow
 	                      evt={it.evt}
 	                      oracle={oracle}
-	                      badge={it.badge || ''}
 	                      showRespond={!it.badge}
 	                      onSelect={() => setSelected({ type: it.badge ? 'offer_posted' : 'offer', evt: it.evt })}
 	                      onRespond={() => adoptOfferIntoRfqDraft(it.evt)}
@@ -5956,7 +5954,6 @@ function App() {
 	                    <RfqRow
 	                      evt={it.evt}
 	                      oracle={oracle}
-	                      badge={it.badge || ''}
 	                      showQuote={false}
 	                      onSelect={() => setSelected({ type: it.badge ? 'rfq_posted' : 'rfq', evt: it.evt })}
 	                      onQuote={() => {}}
@@ -6324,7 +6321,7 @@ function App() {
                 listRef={tradesListRef}
                 items={trades}
                 itemKey={(t) => String(t?.trade_id || t?.updated_at || '')}
-                estimatePx={92}
+                estimatePx={58}
                 onScroll={onTradesScroll}
 	                render={(t) => (
 	                  <TradeRow
@@ -6472,7 +6469,7 @@ function App() {
                 listRef={openRefundsListRef}
                 items={openRefunds}
                 itemKey={(t) => String(t?.trade_id || t?.updated_at || '')}
-                estimatePx={92}
+                estimatePx={58}
                 onScroll={onOpenRefundsScroll}
 	                render={(t) => (
 	                  <TradeRow
@@ -6505,7 +6502,7 @@ function App() {
                 listRef={openClaimsListRef}
                 items={openClaims}
                 itemKey={(t) => String(t?.trade_id || t?.updated_at || '')}
-                estimatePx={92}
+                estimatePx={58}
                 onScroll={onOpenClaimsScroll}
 	                render={(t) => (
 	                  <TradeRow
@@ -8180,15 +8177,6 @@ function formatHumanNumber(value: number, { maxFractionDigits = 2 }: { maxFracti
   }
 }
 
-function shortMonoId(raw: any, { head = 12, tail = 8 }: { head?: number; tail?: number } = {}) {
-  const s = String(raw || '').trim();
-  if (!s) return '';
-  const h = Math.max(1, Math.trunc(head));
-  const t = Math.max(1, Math.trunc(tail));
-  if (s.length <= h + t + 1) return s;
-  return `${s.slice(0, h)}…${s.slice(-t)}`;
-}
-
 function lamportsToSolDisplay(lamports: any) {
   const s = String(lamports ?? '').trim();
   if (!s || !/^[0-9]+$/.test(s)) return '';
@@ -9091,23 +9079,20 @@ function QuoteRow({
   onAccept: () => void;
 }) {
   const body = evt?.message?.body;
-  const postedIso = typeof evt?.ts === 'number' ? msToUtcIso(evt.ts) : '';
-  const tradeId = String(evt?.trade_id || evt?.message?.trade_id || '').trim();
-  const rfqId = String(body?.rfq_id || '').trim();
   const btcSats = typeof body?.btc_sats === 'number' ? body.btc_sats : null;
   const usdtAtomic = typeof body?.usdt_amount === 'string' ? body.usdt_amount : '';
-  const platformFee = body?.platform_fee_bps;
-  const tradeFee = body?.trade_fee_bps;
-  const totalFee = typeof platformFee === 'number' && typeof tradeFee === 'number' ? platformFee + tradeFee : null;
+  const totalFee = (() => {
+    const p = body?.platform_fee_bps;
+    const t = body?.trade_fee_bps;
+    return typeof p === 'number' && typeof t === 'number' ? p + t : null;
+  })();
   const solWindow = body?.sol_refund_window_sec;
   const validUntil = body?.valid_until_unix;
   const validUntilIso = typeof validUntil === 'number' ? unixSecToUtcIso(validUntil) : '';
   const expired = typeof validUntil === 'number' ? validUntil <= Math.floor(Date.now() / 1000) : false;
   const oracleBtcUsd = oracle && typeof oracle.btc_usd === 'number' ? oracle.btc_usd : null;
-  const oracleUsdtUsd = oracle && typeof oracle.usdt_usd === 'number' ? oracle.usdt_usd : null;
   const btcUsd = btcSats !== null && oracleBtcUsd ? (btcSats / 1e8) * oracleBtcUsd : null;
   const usdtNum = usdtAtomic ? atomicToNumber(usdtAtomic, 6) : null;
-  const usdtUsd = usdtNum !== null && oracleUsdtUsd ? usdtNum * oracleUsdtUsd : null;
   const btcBtc = btcSats !== null ? btcSats / 1e8 : null;
   const btcDisplay = btcBtc !== null ? formatHumanNumber(btcBtc, { maxFractionDigits: 8 }) : '?';
   const usdtDisplay =
@@ -9118,70 +9103,34 @@ function QuoteRow({
         : '?';
   const pricePerBtc = btcBtc !== null && btcBtc > 0 && usdtNum !== null ? usdtNum / btcBtc : null;
   const priceDisplay = pricePerBtc !== null ? formatHumanNumber(pricePerBtc, { maxFractionDigits: 2 }) : '?';
-  const feeDisplay = `${typeof platformFee === 'number' ? `${platformFee} bps (${bpsToPctDisplay(platformFee)}%)` : '?'} platform, ${
-    typeof tradeFee === 'number' ? `${tradeFee} bps (${bpsToPctDisplay(tradeFee)}%)` : '?'
-  } trade, ${typeof totalFee === 'number' ? `${totalFee} bps (${bpsToPctDisplay(totalFee)}%)` : '?'} total`;
-  const refundWindowDisplay = typeof solWindow === 'number' ? `${secToHuman(solWindow)} (${solWindow}s)` : '?';
   return (
     <div className={`rowitem ${expired ? 'expired' : ''}`} role="button" onClick={onSelect}>
       <div className="rowitem-top">
-        <span className="mono chip">{evt.channel}</span>
         {expired ? <span className="mono chip warn">expired</span> : null}
+        <span className="trade-activity-headline">
+          Sell <span className="mono">{btcDisplay}</span> BTC → <span className="mono">{usdtDisplay}</span> USDT
+        </span>
       </div>
       <div className="rowitem-mid">
-        <div className="trade-activity">
-          <div className="trade-activity-headline">
-            Sell <span className="mono">{btcDisplay}</span> BTC for <span className="mono">{usdtDisplay}</span> USDT
-          </div>
-          <div className="trade-activity-price">
-            Price / BTC: <span className="mono">{priceDisplay}</span> USDT
-          </div>
-          <div className="trade-activity-details">
-            <span>
-              <span className="muted">Quote:</span> <span className="mono">{shortMonoId(tradeId) || '?'}</span>
-            </span>
-            <span>
-              <span className="muted">RFQ ID:</span> <span className="mono">{shortMonoId(rfqId) || '?'}</span>
-            </span>
-            <span>
-              <span className="muted">Posted:</span> <span className="mono">{postedIso || '?'}</span>
-            </span>
-            <span>
-              <span className="muted">Expires:</span>{' '}
-              <span className="mono">{validUntilIso || '?'}{typeof validUntil === 'number' ? ` (${validUntil})` : ''}</span>
-            </span>
-            <span>
-              <span className="muted">Fees:</span> <span className="mono">{feeDisplay}</span>
-            </span>
-            <span>
-              <span className="muted">Refund Window:</span> <span className="mono">{refundWindowDisplay}</span>
-            </span>
-            {btcUsd !== null ? (
-              <span>
-                <span className="muted">BTC Value:</span> <span className="mono">{fmtUsd(btcUsd)}</span>
-              </span>
-            ) : null}
-            {usdtUsd !== null ? (
-              <span>
-                <span className="muted">USDT Value:</span> <span className="mono">{fmtUsd(usdtUsd)}</span>
-              </span>
-            ) : null}
-          </div>
+        <span className="muted"><span className="mono">{priceDisplay}</span> USDT/BTC</span>
+        {btcUsd !== null ? <span className="muted">≈ {fmtUsd(btcUsd)}</span> : null}
+        {typeof totalFee === 'number' ? <span className="muted">fees {bpsToPctDisplay(totalFee)}%</span> : null}
+        {typeof solWindow === 'number' ? <span className="muted">win {secToHuman(solWindow)}</span> : null}
+        <span className="dim">{validUntilIso ? `exp ${validUntilIso}` : ''}</span>
+      </div>
+      {!expired ? (
+        <div className="rowitem-bot">
+          <button
+            className="btn small primary"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAccept();
+            }}
+          >
+            Accept
+          </button>
         </div>
-      </div>
-      <div className="rowitem-bot">
-        <button
-          className="btn small primary"
-          disabled={expired}
-          title={expired ? 'Quote expired' : ''}
-          onClick={(e) => {
-            e.stopPropagation();
-            onAccept();
-          }}
-        >
-          Accept
-        </button>
-      </div>
+      ) : null}
     </div>
   );
 }
@@ -9192,23 +9141,16 @@ function RfqRow({
   onSelect,
   onQuote,
   showQuote = true,
-  badge = '',
 }: {
   evt: any;
   oracle?: OracleSummary;
   onSelect: () => void;
   onQuote: () => void;
   showQuote?: boolean;
-  badge?: string;
 }) {
   const body = evt?.message?.body;
-  const postedIso = typeof evt?.ts === 'number' ? msToUtcIso(evt.ts) : '';
-  const tradeId = String(evt?.trade_id || evt?.message?.trade_id || '').trim();
-  const direction = typeof body?.direction === 'string' ? body.direction : '';
   const btcSats = typeof body?.btc_sats === 'number' ? body.btc_sats : null;
   const usdtAtomic = typeof body?.usdt_amount === 'string' ? body.usdt_amount : '';
-  const maxPlatform = body?.max_platform_fee_bps;
-  const maxTrade = body?.max_trade_fee_bps;
   const maxTotal = body?.max_total_fee_bps;
   const minWin = body?.min_sol_refund_window_sec;
   const maxWin = body?.max_sol_refund_window_sec;
@@ -9216,10 +9158,8 @@ function RfqRow({
   const validUntilIso = typeof validUntil === 'number' ? unixSecToUtcIso(validUntil) : '';
   const expired = typeof validUntil === 'number' ? validUntil <= Math.floor(Date.now() / 1000) : false;
   const oracleBtcUsd = oracle && typeof oracle.btc_usd === 'number' ? oracle.btc_usd : null;
-  const oracleUsdtUsd = oracle && typeof oracle.usdt_usd === 'number' ? oracle.usdt_usd : null;
   const btcUsd = btcSats !== null && oracleBtcUsd ? (btcSats / 1e8) * oracleBtcUsd : null;
   const usdtNum = usdtAtomic ? atomicToNumber(usdtAtomic, 6) : null;
-  const usdtUsd = usdtNum !== null && oracleUsdtUsd ? usdtNum * oracleUsdtUsd : null;
   const btcBtc = btcSats !== null ? btcSats / 1e8 : null;
   const btcDisplay = btcBtc !== null ? formatHumanNumber(btcBtc, { maxFractionDigits: 8 }) : '?';
   const usdtDisplay =
@@ -9230,69 +9170,23 @@ function RfqRow({
         : '?';
   const pricePerBtc = btcBtc !== null && btcBtc > 0 && usdtNum !== null ? usdtNum / btcBtc : null;
   const priceDisplay = pricePerBtc !== null ? formatHumanNumber(pricePerBtc, { maxFractionDigits: 2 }) : '?';
-  const feeCapsDisplay = `${typeof maxPlatform === 'number' ? `${maxPlatform} bps (${bpsToPctDisplay(maxPlatform)}%)` : '?'} platform, ${
-    typeof maxTrade === 'number' ? `${maxTrade} bps (${bpsToPctDisplay(maxTrade)}%)` : '?'
-  } trade, ${typeof maxTotal === 'number' ? `${maxTotal} bps (${bpsToPctDisplay(maxTotal)}%)` : '?'} total`;
-  const refundWindowDisplay = `${typeof minWin === 'number' ? `${secToHuman(minWin)} (${minWin}s)` : '?'} - ${
-    typeof maxWin === 'number' ? `${secToHuman(maxWin)} (${maxWin}s)` : '?'
-  }`;
-  const directionHint =
-    direction === 'BTC_LN->USDT_SOL'
-      ? 'give BTC (Lightning), receive USDT (Solana)'
-      : direction
-        ? 'direction'
-        : '';
   return (
     <div className={`rowitem ${expired ? 'expired' : ''}`} role="button" onClick={onSelect}>
       <div className="rowitem-top">
-        <span className="mono chip">{evt.channel}</span>
-        {badge ? <span className="mono chip hi">{badge}</span> : null}
         {expired ? <span className="mono chip warn">expired</span> : null}
+        <span className="trade-activity-headline">
+          Sell <span className="mono">{btcDisplay}</span> BTC → <span className="mono">{usdtDisplay}</span> USDT
+        </span>
       </div>
       <div className="rowitem-mid">
-        <div className="trade-activity">
-          <div className="trade-activity-headline">
-            Sell <span className="mono">{btcDisplay}</span> BTC for <span className="mono">{usdtDisplay}</span> USDT
-          </div>
-          <div className="trade-activity-price">
-            Price / BTC: <span className="mono">{priceDisplay}</span> USDT
-          </div>
-          <div className="trade-activity-details">
-            <span>
-              <span className="muted">Trade:</span> <span className="mono">{shortMonoId(tradeId) || '?'}</span>
-            </span>
-            <span>
-              <span className="muted">Direction:</span> <span className="mono">{direction || '?'}</span>
-              {directionHint ? ` (${directionHint})` : ''}
-            </span>
-            <span>
-              <span className="muted">Posted:</span> <span className="mono">{postedIso || '?'}</span>
-            </span>
-            <span>
-              <span className="muted">Expires:</span>{' '}
-              <span className="mono">{validUntilIso || '?'}{typeof validUntil === 'number' ? ` (${validUntil})` : ''}</span>
-            </span>
-            <span>
-              <span className="muted">Fee Caps:</span> <span className="mono">{feeCapsDisplay}</span>
-            </span>
-            <span>
-              <span className="muted">Refund Window:</span> <span className="mono">{refundWindowDisplay}</span>
-            </span>
-            {btcUsd !== null ? (
-              <span>
-                <span className="muted">BTC Value:</span> <span className="mono">{fmtUsd(btcUsd)}</span>
-              </span>
-            ) : null}
-            {usdtUsd !== null ? (
-              <span>
-                <span className="muted">USDT Value:</span> <span className="mono">{fmtUsd(usdtUsd)}</span>
-              </span>
-            ) : null}
-          </div>
-        </div>
+        <span className="muted"><span className="mono">{priceDisplay}</span> USDT/BTC</span>
+        {btcUsd !== null ? <span className="muted">≈ {fmtUsd(btcUsd)}</span> : null}
+        <span className="muted">fees {typeof maxTotal === 'number' ? `${bpsToPctDisplay(maxTotal)}%` : '?'}</span>
+        <span className="muted">win {typeof minWin === 'number' ? secToHuman(minWin) : '?'}–{typeof maxWin === 'number' ? secToHuman(maxWin) : '?'}</span>
+        <span className="dim">{validUntilIso ? `exp ${validUntilIso}` : ''}</span>
       </div>
-      <div className="rowitem-bot">
-        {showQuote ? (
+      {showQuote ? (
+        <div className="rowitem-bot">
           <button
             className="btn small primary"
             disabled={expired}
@@ -9304,8 +9198,8 @@ function RfqRow({
           >
             Quote
           </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -9316,40 +9210,28 @@ function OfferRow({
   onSelect,
   onRespond,
   showRespond = true,
-  badge = '',
 }: {
   evt: any;
   oracle?: OracleSummary;
   onSelect: () => void;
   onRespond: () => void;
   showRespond?: boolean;
-  badge?: string;
 }) {
   const body = evt?.message?.body;
-  const postedIso = typeof evt?.ts === 'number' ? msToUtcIso(evt.ts) : '';
-  const tradeId = String(evt?.trade_id || evt?.message?.trade_id || '').trim();
-  const name = typeof body?.name === 'string' ? body.name : '';
   const offers = Array.isArray(body?.offers) ? body.offers : [];
   const o = offers[0] && typeof offers[0] === 'object' ? offers[0] : {};
 
-  const have = typeof o?.have === 'string' ? o.have : '';
-  const want = typeof o?.want === 'string' ? o.want : '';
   const btcSats = typeof o?.btc_sats === 'number' ? o.btc_sats : null;
   const usdtAtomic = typeof o?.usdt_amount === 'string' ? o.usdt_amount : '';
-  const maxPlatform = o?.max_platform_fee_bps;
-  const maxTrade = o?.max_trade_fee_bps;
   const maxTotal = o?.max_total_fee_bps;
   const minWin = o?.min_sol_refund_window_sec;
   const maxWin = o?.max_sol_refund_window_sec;
   const validUntil = body?.valid_until_unix;
   const validUntilIso = typeof validUntil === 'number' ? unixSecToUtcIso(validUntil) : '';
   const expired = typeof validUntil === 'number' ? validUntil <= Math.floor(Date.now() / 1000) : false;
-  const rfqChans = Array.isArray(body?.rfq_channels) ? body.rfq_channels.map((c: any) => String(c || '').trim()).filter(Boolean) : [];
   const oracleBtcUsd = oracle && typeof oracle.btc_usd === 'number' ? oracle.btc_usd : null;
-  const oracleUsdtUsd = oracle && typeof oracle.usdt_usd === 'number' ? oracle.usdt_usd : null;
   const btcUsd = btcSats !== null && oracleBtcUsd ? (btcSats / 1e8) * oracleBtcUsd : null;
   const usdtNum = usdtAtomic ? atomicToNumber(usdtAtomic, 6) : null;
-  const usdtUsd = usdtNum !== null && oracleUsdtUsd ? usdtNum * oracleUsdtUsd : null;
   const btcBtc = btcSats !== null ? btcSats / 1e8 : null;
   const btcDisplay = btcBtc !== null ? formatHumanNumber(btcBtc, { maxFractionDigits: 8 }) : '?';
   const usdtDisplay =
@@ -9360,80 +9242,25 @@ function OfferRow({
         : '?';
   const pricePerBtc = btcBtc !== null && btcBtc > 0 && usdtNum !== null ? usdtNum / btcBtc : null;
   const priceDisplay = pricePerBtc !== null ? formatHumanNumber(pricePerBtc, { maxFractionDigits: 2 }) : '?';
-  const feeCapsDisplay = `${typeof maxPlatform === 'number' ? `${maxPlatform} bps (${bpsToPctDisplay(maxPlatform)}%)` : '?'} platform, ${
-    typeof maxTrade === 'number' ? `${maxTrade} bps (${bpsToPctDisplay(maxTrade)}%)` : '?'
-  } trade, ${typeof maxTotal === 'number' ? `${maxTotal} bps (${bpsToPctDisplay(maxTotal)}%)` : '?'} total`;
-  const refundWindowDisplay = `${typeof minWin === 'number' ? `${secToHuman(minWin)} (${minWin}s)` : '?'} - ${
-    typeof maxWin === 'number' ? `${secToHuman(maxWin)} (${maxWin}s)` : '?'
-  }`;
-
-  const hint =
-    have === 'USDT_SOL' && want === 'BTC_LN'
-      ? 'have USDT (Solana), want BTC (Lightning)'
-      : have || want
-        ? 'offer'
-        : '';
 
   return (
     <div className={`rowitem ${expired ? 'expired' : ''}`} role="button" onClick={onSelect}>
       <div className="rowitem-top">
-        <span className="mono chip">{evt.channel}</span>
-        {badge ? <span className="mono chip hi">{badge}</span> : null}
         {expired ? <span className="mono chip warn">expired</span> : null}
+        {offers.length > 1 ? <span className="mono chip">{offers.length} lines</span> : null}
+        <span className="trade-activity-headline">
+          Sell <span className="mono">{usdtDisplay}</span> USDT → <span className="mono">{btcDisplay}</span> BTC
+        </span>
       </div>
       <div className="rowitem-mid">
-        <div className="trade-activity">
-          <div className="trade-activity-headline">
-            Sell <span className="mono">{usdtDisplay}</span> USDT for <span className="mono">{btcDisplay}</span> BTC
-          </div>
-          <div className="trade-activity-price">
-            Price / BTC: <span className="mono">{priceDisplay}</span> USDT
-          </div>
-          <div className="trade-activity-details">
-            <span>
-              <span className="muted">Trade:</span> <span className="mono">{shortMonoId(tradeId) || '?'}</span>
-            </span>
-            <span>
-              <span className="muted">Listing:</span> <span className="mono">{name || '?'}</span>
-            </span>
-            <span>
-              <span className="muted">Posted:</span> <span className="mono">{postedIso || '?'}</span>
-            </span>
-            <span>
-              <span className="muted">Expires:</span>{' '}
-              <span className="mono">{validUntilIso || '?'}{typeof validUntil === 'number' ? ` (${validUntil})` : ''}</span>
-            </span>
-            <span>
-              <span className="muted">Fee Caps:</span> <span className="mono">{feeCapsDisplay}</span>
-            </span>
-            <span>
-              <span className="muted">Refund Window:</span> <span className="mono">{refundWindowDisplay}</span>
-            </span>
-            <span>
-              <span className="muted">RFQ Channels:</span> <span className="mono">{rfqChans.length > 0 ? rfqChans.join(', ') : '?'}</span>
-            </span>
-            <span>
-              <span className="muted">Offer Shape:</span>{' '}
-              <span className="mono">
-                {hint || '?'}
-                {offers.length > 1 ? ` (+${offers.length - 1} more line${offers.length - 1 > 1 ? 's' : ''})` : ''}
-              </span>
-            </span>
-            {btcUsd !== null ? (
-              <span>
-                <span className="muted">BTC Value:</span> <span className="mono">{fmtUsd(btcUsd)}</span>
-              </span>
-            ) : null}
-            {usdtUsd !== null ? (
-              <span>
-                <span className="muted">USDT Value:</span> <span className="mono">{fmtUsd(usdtUsd)}</span>
-              </span>
-            ) : null}
-          </div>
-        </div>
+        <span className="muted"><span className="mono">{priceDisplay}</span> USDT/BTC</span>
+        {btcUsd !== null ? <span className="muted">≈ {fmtUsd(btcUsd)}</span> : null}
+        <span className="muted">fees {typeof maxTotal === 'number' ? `${bpsToPctDisplay(maxTotal)}%` : '?'}</span>
+        <span className="muted">win {typeof minWin === 'number' ? secToHuman(minWin) : '?'}–{typeof maxWin === 'number' ? secToHuman(maxWin) : '?'}</span>
+        <span className="dim">{validUntilIso ? `exp ${validUntilIso}` : ''}</span>
       </div>
-      <div className="rowitem-bot">
-        {showRespond ? (
+      {showRespond ? (
+        <div className="rowitem-bot">
           <button
             className="btn small primary"
             disabled={expired}
@@ -9443,10 +9270,10 @@ function OfferRow({
               onRespond();
             }}
           >
-            Respond (post RFQ)
+            Respond
           </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -9599,63 +9426,54 @@ function TradeRow({
   onRecoverClaim: () => void;
   onRecoverRefund: () => void;
 }) {
-  const id = String(trade?.trade_id || '').trim();
   const state = String(trade?.state || '').trim();
   const role = String(trade?.role || '').trim();
-  const updated = typeof trade?.updated_at === 'number' ? msToUtcIso(trade.updated_at) : '';
   const sats = typeof trade?.btc_sats === 'number' ? trade.btc_sats : null;
   const usdtAtomic = typeof trade?.usdt_amount === 'string' ? trade.usdt_amount : '';
-  const swapChannel = String(trade?.swap_channel || '').trim();
   const oracleBtcUsd = oracle && typeof oracle.btc_usd === 'number' ? oracle.btc_usd : null;
-  const oracleUsdtUsd = oracle && typeof oracle.usdt_usd === 'number' ? oracle.usdt_usd : null;
   const btcUsd = sats !== null && oracleBtcUsd ? (sats / 1e8) * oracleBtcUsd : null;
   const usdtNum = usdtAtomic ? atomicToNumber(usdtAtomic, 6) : null;
-  const usdtUsd = usdtNum !== null && oracleUsdtUsd ? usdtNum * oracleUsdtUsd : null;
+  const btcBtc = sats !== null ? sats / 1e8 : null;
+  const btcDisplay = btcBtc !== null ? formatHumanNumber(btcBtc, { maxFractionDigits: 8 }) : '?';
+  const usdtDisplay = usdtNum !== null
+    ? formatHumanNumber(usdtNum, { maxFractionDigits: 6 })
+    : usdtAtomic ? atomicToDecimal(usdtAtomic, 6) : '?';
+  const pricePerBtc = btcBtc !== null && btcBtc > 0 && usdtNum !== null ? usdtNum / btcBtc : null;
+  const priceDisplay = pricePerBtc !== null ? formatHumanNumber(pricePerBtc, { maxFractionDigits: 2 }) : null;
+  const expired = state === 'expired' || state === 'failed' || state === 'refunded';
 
   const canClaim = state === 'ln_paid' && Boolean(String(trade?.ln_preimage_hex || '').trim());
-  // The list_open_refunds tool already filters by refund_after_unix <= now, so treat escrow+refund_after as actionable.
   const canRefund = state === 'escrow' && trade?.sol_refund_after_unix !== null && trade?.sol_refund_after_unix !== undefined;
 
   return (
-    <div className={`rowitem ${selected ? 'selected' : ''}`} role="button" onClick={onSelect}>
+    <div className={`rowitem ${selected ? 'selected' : ''} ${expired ? 'expired' : ''}`} role="button" onClick={onSelect}>
       <div className="rowitem-top">
         <span className="mono chip">{role || 'trade'}</span>
-        <span className="mono dim">{id || '(no trade_id)'}</span>
-        {swapChannel ? <span className="mono chip hi">{swapChannel}</span> : null}
+        <span className="mono chip hi">{state || '?'}</span>
+        {expired ? <span className="mono chip warn">ended</span> : null}
+        <span className="trade-activity-headline">
+          <span className="mono">{btcDisplay}</span> BTC → <span className="mono">{usdtDisplay}</span> USDT
+        </span>
       </div>
       <div className="rowitem-mid">
-        <span className="mono">state: {state || '?'}</span>
-        <span className="mono">
-          BTC: {sats !== null ? `${satsToBtcDisplay(sats)} BTC (${sats} sats)` : '?'}
-          {btcUsd !== null ? ` ≈ ${fmtUsd(btcUsd)}` : ''}
-        </span>
-        <span className="mono">
-          USDT: {usdtAtomic ? `${atomicToDecimal(usdtAtomic, 6)} (${usdtAtomic})` : '?'}
-          {usdtUsd !== null ? ` ≈ ${fmtUsd(usdtUsd)}` : ''}
-        </span>
+        {priceDisplay ? <span className="muted"><span className="mono">{priceDisplay}</span> USDT/BTC</span> : null}
+        {btcUsd !== null ? <span className="muted">≈ {fmtUsd(btcUsd)}</span> : null}
       </div>
       <div className="rowitem-bot">
-        <span className="muted small">{updated}</span>
         <div className="row">
           <button
             className={`btn small ${canClaim ? 'primary' : ''}`}
             aria-disabled={!canClaim}
-            title={canClaim ? 'Claim now' : 'Not claimable yet (click for details)'}
-            onClick={(e) => {
-              e.stopPropagation();
-              onRecoverClaim();
-            }}
+            title={canClaim ? 'Claim now' : 'Not claimable yet'}
+            onClick={(e) => { e.stopPropagation(); onRecoverClaim(); }}
           >
             Claim
           </button>
           <button
             className={`btn small ${canRefund ? 'primary' : ''}`}
             aria-disabled={!canRefund}
-            title={canRefund ? 'Refund now' : 'Not refundable yet (click for details)'}
-            onClick={(e) => {
-              e.stopPropagation();
-              onRecoverRefund();
-            }}
+            title={canRefund ? 'Refund now' : 'Not refundable yet'}
+            onClick={(e) => { e.stopPropagation(); onRecoverRefund(); }}
           >
             Refund
           </button>
