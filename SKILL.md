@@ -314,6 +314,22 @@ Wallet path policy (promptd tools):
 - Solana signing has no fallback guessing: promptd uses `solana.keypair` only. If missing/wrong, tools fail fast.
 - Peer signing may be inferred from store (`stores/<store>/db/keypair.json`) during stack start, but production setups should still set `peer.keypair` explicitly.
 
+LND wallet password persistence (important; mainnet-safe):
+- The **real** LND wallet password is the one that encrypts `wallet.db` inside the LND datadir (docker volume or local `lnddir`).
+- Our `onchain/lnd/**/wallet.pw` / `maker.wallet-password.txt` files are **just inputs** for `lncli unlock` (and/or `wallet-unlock-password-file`).
+- Changing the password file **does not** change the wallet password. If they drift, unlock fails with errors like:
+  - `invalid passphrase for master public key`
+- Treat LN credentials as durable secrets:
+  - never remove/delete wallets, seed phrases, password files, or docker volumes that might hold LN funds/channels
+  - if a prompt suggests deleting/re-initializing, stop and get explicit operator confirmation first
+- If unlock fails and the password is unknown, the only viable recovery is a **seed restore**:
+  1. Backup the datadir/volume first (must include `wallet.db` and `channel.backup`).
+  2. Stop LND.
+  3. Move `wallet.db` + macaroon DB/files aside (do not delete).
+  4. Start LND; `lncli state` should become `NON_EXISTING`.
+  5. Run `lncli create` with the saved seed, and include the static channel backup (`--multi_file .../channel.backup`) to recover off-chain funds.
+  6. Update `ln.wallet_password_file` to match the password you actually used for the restored wallet.
+
 Run `promptd`:
 ```bash
 ./scripts/promptd.sh --config onchain/prompt/setup.json
