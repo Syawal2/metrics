@@ -56,6 +56,18 @@ test('repairToolArguments: coerces rfq_post usdt_amount decimal to atomic', () =
   assert.equal(out.usdt_amount, '120000');
 });
 
+test('repairToolArguments: rfq_post accepts ttl_sec by converting to valid_until_unix', () => {
+  const out = repairToolArguments('intercomswap_rfq_post', {
+    channel: '0000intercomswapbtcusdt',
+    trade_id: 'rfq-1',
+    btc_sats: 1000,
+    usdt_amount: '120000',
+    ttl_sec: 60,
+  });
+  assert.ok('valid_until_unix' in out);
+  assert.ok(!('ttl_sec' in out));
+});
+
 test('repairToolArguments: offer_post drops valid_until_unix when ttl_sec is present', () => {
   const out = repairToolArguments('intercomswap_offer_post', {
     channels: ['0000intercomswapbtcusdt'],
@@ -105,6 +117,20 @@ test('repairToolArguments: offer_post renames common offer-line key aliases', ()
   assert.equal(out.offers[0].max_trade_fee_bps, 10);
   assert.ok(!('max_sol_refund_sec' in out.offers[0]));
   assert.equal(out.offers[0].max_sol_refund_window_sec, 7200);
+});
+
+test('repairToolArguments: quote_post maps ttl_sec to valid_for_sec', () => {
+  const out = repairToolArguments('intercomswap_quote_post', {
+    channel: '0000intercomswapbtcusdt',
+    trade_id: 'rfq-1',
+    rfq_id: '0'.repeat(64),
+    btc_sats: 1000,
+    usdt_amount: '120000',
+    trade_fee_collector: '11111111111111111111111111111111',
+    ttl_sec: 60,
+  });
+  assert.equal(out.valid_for_sec, 60);
+  assert.ok(!('ttl_sec' in out));
 });
 
 test('repairToolArguments: coerces sol_transfer_sol lamports decimal (SOL units) to atomic lamports', () => {

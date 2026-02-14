@@ -188,12 +188,51 @@ export function repairToolArguments(toolName, args) {
   if (toolName === 'intercomswap_rfq_post' || toolName === 'intercomswap_quote_post' || toolName === 'intercomswap_terms_post') {
     const out = { ...args };
     if ('usdt_amount' in out) out.usdt_amount = coerceUsdtAtomic(out.usdt_amount);
+    if (toolName === 'intercomswap_rfq_post') {
+      // rfq_post does not accept ttl_sec, but models often emit it for "valid X".
+      // Convert it into an absolute valid_until_unix (now + ttl) and drop ttl_sec.
+      if ('valid_until_unix' in out) out.valid_until_unix = coerceSafeInt(out.valid_until_unix);
+      if ('ttl_sec' in out) {
+        const ttl = coerceSafeInt(out.ttl_sec);
+        if (!(out.valid_until_unix !== null && out.valid_until_unix !== undefined) && Number.isInteger(ttl) && ttl > 0) {
+          out.valid_until_unix = Math.floor(Date.now() / 1000) + ttl;
+        }
+        delete out.ttl_sec;
+      }
+    }
+    if (toolName === 'intercomswap_quote_post') {
+      // quote_post uses valid_for_sec (relative) or valid_until_unix (absolute).
+      // Accept ttl_sec as an alias for valid_for_sec.
+      if ('valid_for_sec' in out) out.valid_for_sec = coerceSafeInt(out.valid_for_sec);
+      if ('valid_until_unix' in out) out.valid_until_unix = coerceSafeInt(out.valid_until_unix);
+      if ('ttl_sec' in out) {
+        const ttl = coerceSafeInt(out.ttl_sec);
+        if (!(out.valid_for_sec !== null && out.valid_for_sec !== undefined) && !(out.valid_until_unix !== null && out.valid_until_unix !== undefined) && Number.isInteger(ttl) && ttl > 0) {
+          out.valid_for_sec = ttl;
+        }
+        delete out.ttl_sec;
+      }
+    }
     return out;
   }
 
   if (toolName === 'intercomswap_sol_airdrop' || toolName === 'intercomswap_sol_transfer_sol') {
     const out = { ...args };
     if ('lamports' in out) out.lamports = coerceSolLamports(out.lamports);
+    return out;
+  }
+
+  if (toolName === 'intercomswap_quote_post_from_rfq') {
+    const out = { ...args };
+    if ('valid_for_sec' in out) out.valid_for_sec = coerceSafeInt(out.valid_for_sec);
+    if ('valid_until_unix' in out) out.valid_until_unix = coerceSafeInt(out.valid_until_unix);
+    if ('ttl_sec' in out) {
+      const ttl = coerceSafeInt(out.ttl_sec);
+      if (!(out.valid_for_sec !== null && out.valid_for_sec !== undefined) && !(out.valid_until_unix !== null && out.valid_until_unix !== undefined) && Number.isInteger(ttl) && ttl > 0) {
+        out.valid_for_sec = ttl;
+      }
+      delete out.ttl_sec;
+    }
     return out;
   }
 
